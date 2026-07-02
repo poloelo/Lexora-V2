@@ -1,0 +1,23 @@
+FROM node:18-bullseye-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY lexora/backend/package*.json ./
+
+RUN npm ci
+
+RUN npm rebuild better-sqlite3
+
+COPY lexora/backend/ .
+
+RUN mkdir -p /app/data
+
+EXPOSE 3000
+
+CMD ["node", "index.js"]

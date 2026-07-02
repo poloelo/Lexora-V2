@@ -1,0 +1,42 @@
+services:
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: lexora-backend
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DB_PATH=/app/data/lexora.db
+      - OLLAMA_URL=http://host.docker.internal:11434
+      # Surchargez ADMIN_KEY et OLLAMA_MODEL via un fichier .env ou une variable d'env
+      # ADMIN_KEY=votre-cle-secrete
+      # OLLAMA_MODEL=llama3.2
+    volumes:
+      - sqlite-data:/app/data
+      # BUG CORRIGÉ : les fichiers uploadés doivent être persistés dans un volume.
+      # Sans ce volume, tous les fichiers sont perdus au redémarrage du conteneur
+      # alors que leurs métadonnées restent en base SQLite → incohérence.
+      - uploads-data:/app/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: lexora-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  # Persistance de la base SQLite
+  sqlite-data:
+  # Persistance des fichiers uploadés dans le coffre-fort documentaire
+  uploads-data:

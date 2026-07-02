@@ -1,0 +1,23 @@
+# Ignore TOUS les dossiers node_modules (racine + sous-dossiers)
+# Sans ** il ignorerait seulement node_modules à la racine
+**/node_modules
+
+# Logs d'erreur npm inutiles dans le conteneur
+npm-debug.log
+
+# Variables d'environnement secrètes (API keys, mots de passe)
+# NE JAMAIS envoyer ce fichier dans Docker !
+.env
+
+# Historique Git inutile dans le conteneur
+.git
+.gitignore
+
+# Fichiers markdown de documentation
+*.md
+
+# Dossiers de build locaux (seront recréés dans le conteneur)
+**/dist
+
+# Fichier caché macOS inutile
+.DS_Store
