@@ -19,7 +19,8 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
 // ── Import des modules de routes ──────────────────────────────
-import tachesRouter      from './routes/taches.js';
+import tasksRouter       from './routes/tasks.js';
+import departementsRouter from './routes/departements.js';
 import facturesRouter    from './routes/factures.js';
 import planningRouter    from './routes/planning.js';
 import assistantRouter   from './routes/assistant.js';
@@ -78,13 +79,14 @@ app.get('/api/health', (req, res) => {
 });
 
 // ── Montage des routes ────────────────────────────────────────
-app.use('/api/auth',        authRouter);
-app.use('/api/taches',      tachesRouter);
-app.use('/api/factures',    facturesRouter);
-app.use('/api/planning',    planningRouter);
-app.use('/api/assistant',   assistantRouter);
-app.use('/api/todos',       todosRouter);
-app.use('/api/clients',     clientsRouter);
+app.use('/api/auth',         authRouter);
+app.use('/api/tasks',        tasksRouter);        // Protégé par verifyJWT (tâches de département)
+app.use('/api/departements', departementsRouter); // Protégé par verifyJWT
+app.use('/api/factures',     facturesRouter);
+app.use('/api/planning',     planningRouter);
+app.use('/api/assistant',    assistantRouter);
+app.use('/api/todos',        todosRouter);        // Protégé par verifyJWT (post-its personnels)
+app.use('/api/clients',      clientsRouter);
 app.use('/api/employes',    employesRouter);     // Protégé par verifyJWT
 app.use('/api/automations', automationsRouter);  // Protégé par verifyJWT
 app.use('/api/evenements',  evenementsRouter);

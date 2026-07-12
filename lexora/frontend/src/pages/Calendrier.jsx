@@ -125,15 +125,20 @@ export default function Calendrier() {
 
       // Conversion des entrées de planning
       // La table planning stocke date + heure séparément : on les concatène
-      const plan = (Array.isArray(planData) ? planData : []).map(p => ({
-        id:          `planning-${p.id}`,  // Préfixe pour éviter les collisions d'ID
-        title:       `${p.employe}${p.projet ? ' — ' + p.projet : ''}`,
-        start:       new Date(`${p.date}T${p.heure_debut}`),
-        end:         new Date(`${p.date}T${p.heure_fin}`),
-        type:        'planning',
-        description: `Employé : ${p.employe}${p.projet ? '\nProjet : ' + p.projet : ''}`,
-        source:      'planning',
-      }));
+      // Le nom vient de la jointure backend (employe_nom) ; p.employe est le
+      // reliquat texte des bases partiellement migrées (voir db.js)
+      const plan = (Array.isArray(planData) ? planData : []).map(p => {
+        const nom = p.employe_nom || p.employe || 'Employé';
+        return {
+          id:          `planning-${p.id}`,  // Préfixe pour éviter les collisions d'ID
+          title:       `${nom}${p.projet ? ' — ' + p.projet : ''}`,
+          start:       new Date(`${p.date}T${p.heure_debut}`),
+          end:         new Date(`${p.date}T${p.heure_fin}`),
+          type:        'planning',
+          description: `Employé : ${nom}${p.projet ? '\nProjet : ' + p.projet : ''}`,
+          source:      'planning',
+        };
+      });
 
       setEvents([...evts, ...plan]);
     } catch {
