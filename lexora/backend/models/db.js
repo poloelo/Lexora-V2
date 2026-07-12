@@ -9,6 +9,10 @@
  * Toutes les tables sont créées avec IF NOT EXISTS : l'application peut redémarrer
  * sans perdre les données existantes.
  *
+ * Les migrations plus bas sont idempotentes : elles détectent l'état du schéma
+ * (PRAGMA table_info / sqlite_master) et ne s'exécutent qu'une seule fois.
+ * Un redémarrage sur une base déjà migrée est un no-op.
+ *
  * Chemin du fichier SQLite : variable d'env DB_PATH (défaut : ./lexora.db)
  * En Docker : /app/data/lexora.db (monté dans le volume sqlite-data)
  */
@@ -21,23 +25,109 @@ import bcrypt from 'bcryptjs';
 const dbPath = process.env.DB_PATH || './lexora.db';
 const db = new Database(path.resolve(dbPath));
 
+// Les clés étrangères ne sont PAS appliquées par défaut dans SQLite :
+// ce pragma doit être activé à chaque connexion pour que les contraintes
+// REFERENCES / ON DELETE soient réellement vérifiées.
+db.pragma('foreign_keys = ON');
+
+// Schéma de la nouvelle table todos (post-its personnels).
+// Défini dans une constante car il sert à deux endroits :
+//  1. la création initiale (base neuve)
+//  2. la reconstruction lors de la migration de l'ancienne table todos
+const TODOS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS todos (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    content    TEXT NOT NULL,                      -- Texte court, style post-it
+    color      TEXT DEFAULT '#fef3c7',             -- Couleur de rendu du post-it (hex CSS)
+    created_by INTEGER REFERENCES employes(id) ON DELETE SET NULL,
+    status     TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'done')),
+    done_at    TEXT,                               -- Renseigné quand status passe à 'done'
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+`;
+
+// Schéma de la table de jointure todo ↔ assignés, lui aussi réutilisé
+// par la migration de l'ancienne table todos (voir plus bas).
+const TODO_ASSIGNEES_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS todo_assignees (
+    todo_id     INTEGER NOT NULL REFERENCES todos(id)    ON DELETE CASCADE,
+    assignee_id INTEGER NOT NULL REFERENCES employes(id) ON DELETE CASCADE,
+    PRIMARY KEY (todo_id, assignee_id)
+  );
+`;
+
 // Création du schéma complet en une seule transaction
 // (db.exec exécute un bloc SQL multi-instructions)
+//
+// Choix des ON DELETE (justification) :
+//  - tasks.department_id  → CASCADE  : une tâche de département n'a pas de sens
+//    sans son département ; supprimer le département purge ses tâches.
+//  - tasks.created_by / todos.created_by → SET NULL : le travail survit au départ
+//    de son créateur, mais la référence nominative disparaît (RGPD).
+//  - todo_assignees.*     → CASCADE  : table de jointure pure, les lignes suivent
+//    la vie du todo et de l'employé (RGPD : supprimer un employé purge ses assignations).
+//  - employes.departement_id → SET NULL : supprimer un département ne doit pas
+//    supprimer les employés, ils deviennent simplement "sans département".
+//  - planning.employe_id  → CASCADE  : un créneau sans employé n'a pas de sens,
+//    et la suppression d'un employé purge ses données de planning (RGPD).
 db.exec(`
-  -- ── Tâches projet ─────────────────────────────────────────
-  -- Statuts valides : 'todo' | 'in_progress' | 'done'
-  CREATE TABLE IF NOT EXISTS taches (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    titre       TEXT NOT NULL,
-    description TEXT,
-    statut      TEXT DEFAULT 'todo',
-    assignee    TEXT,
-    created_at  TEXT DEFAULT (datetime('now'))
+  -- ── Départements ───────────────────────────────────────────
+  -- Référentiel des départements de l'entreprise. Les employés et les
+  -- tâches y font référence par clé étrangère (plus de nom en texte brut).
+  CREATE TABLE IF NOT EXISTS departements (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    nom        TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT (datetime('now'))
   );
+
+  -- ── Employés ───────────────────────────────────────────────
+  -- Répertoire interne de l'équipe. Accès restreint (admin uniquement).
+  -- Rôles valides : 'employe' | 'manager' | 'admin'
+  CREATE TABLE IF NOT EXISTS employes (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    nom            TEXT NOT NULL,
+    prenom         TEXT,
+    email          TEXT NOT NULL,
+    poste          TEXT,
+    departement_id INTEGER REFERENCES departements(id) ON DELETE SET NULL,
+    salaire        REAL,
+    date_embauche  TEXT,             -- Format : "YYYY-MM-DD"
+    role           TEXT DEFAULT 'employe',
+    password_hash  TEXT,             -- NULL = compte sans mot de passe (legacy)
+    created_at     TEXT DEFAULT (datetime('now'))
+  );
+
+  -- ── Tâches de département (Tasks) ──────────────────────────
+  -- Tâches créées au niveau d'un département, visibles par tous ses membres.
+  -- Statuts valides   : 'todo' | 'in_progress' | 'done'
+  -- Priorités valides : 'low' | 'medium' | 'high'
+  CREATE TABLE IF NOT EXISTS tasks (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    title         TEXT NOT NULL,
+    description   TEXT,
+    department_id INTEGER NOT NULL REFERENCES departements(id) ON DELETE CASCADE,
+    created_by    INTEGER REFERENCES employes(id) ON DELETE SET NULL,
+    status        TEXT DEFAULT 'todo' CHECK (status IN ('todo', 'in_progress', 'done')),
+    priority      TEXT DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
+    due_date      TEXT,              -- Format : "YYYY-MM-DD"
+    created_at    TEXT DEFAULT (datetime('now')),
+    updated_at    TEXT DEFAULT (datetime('now'))
+  );
+
+  -- ── Todos (post-its personnels) ────────────────────────────
+  ${TODOS_SCHEMA}
+
+  -- ── Assignations de todos ──────────────────────────────────
+  -- Un todo peut viser plusieurs employés (table de jointure N-N).
+  ${TODO_ASSIGNEES_SCHEMA}
 
   -- ── Factures ───────────────────────────────────────────────
   -- Statuts valides : 'en attente' | 'payee' | 'annulee'
   -- montant stocké en REAL (virgule flottante) — suffisant pour des montants en €
+  -- NB : le champ client reste volontairement en texte brut : une facture est un
+  -- instantané légal, le libellé du client au moment de l'émission doit rester
+  -- figé même si la fiche client est modifiée ou supprimée par la suite.
   CREATE TABLE IF NOT EXISTS factures (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     client         TEXT NOT NULL,
@@ -52,25 +142,11 @@ db.exec(`
   -- Ces entrées apparaissent aussi dans le calendrier (vue verte "Planning").
   CREATE TABLE IF NOT EXISTS planning (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    employe     TEXT NOT NULL,
+    employe_id  INTEGER REFERENCES employes(id) ON DELETE CASCADE,
     date        TEXT NOT NULL,       -- Format : "YYYY-MM-DD"
     heure_debut TEXT NOT NULL,       -- Format : "HH:mm"
     heure_fin   TEXT NOT NULL,       -- Format : "HH:mm"
     projet      TEXT                 -- Optionnel : nom du projet associé
-  );
-
-  -- ── Notes rapides (Todos) ──────────────────────────────────
-  -- Notes légères avec priorité.
-  -- Statuts valides : 'à faire' | 'en cours' | 'terminé'
-  -- Priorités valides : 'basse' | 'normale' | 'haute'
-  CREATE TABLE IF NOT EXISTS todos (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    titre       TEXT NOT NULL,
-    description TEXT,
-    date        TEXT,                -- Date cible optionnelle (Format : "YYYY-MM-DD")
-    priorite    TEXT DEFAULT 'normale',
-    statut      TEXT DEFAULT 'à faire',
-    created_at  TEXT DEFAULT (datetime('now'))
   );
 
   -- ── Clients ────────────────────────────────────────────────
@@ -92,23 +168,6 @@ db.exec(`
     created_at     TEXT DEFAULT (datetime('now'))
   );
 
-  -- ── Employés ───────────────────────────────────────────────
-  -- Répertoire interne de l'équipe. Accès restreint (admin uniquement).
-  -- Rôles valides : 'employe' | 'admin' (non utilisé pour l'auth ici)
-  CREATE TABLE IF NOT EXISTS employes (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    nom           TEXT NOT NULL,
-    prenom        TEXT,
-    email         TEXT NOT NULL,
-    poste         TEXT,
-    departement   TEXT,
-    salaire       REAL,
-    date_embauche TEXT,             -- Format : "YYYY-MM-DD"
-    role          TEXT DEFAULT 'employe',
-    password_hash TEXT,                -- NULL = compte sans mot de passe (legacy)
-    created_at    TEXT DEFAULT (datetime('now'))
-  );
-
   -- ── Automatisations ────────────────────────────────────────
   -- Règles d'automatisation configurables (actuellement descriptives,
   -- non exécutées automatiquement — à implémenter selon les besoins).
@@ -128,6 +187,9 @@ db.exec(`
   -- Types valides : 'rdv' | 'tache' | 'rappel' | 'evenement' | 'planning'
   -- couleur : code hexadécimal CSS (ex : '#7c6af7')
   -- Les dates sont stockées en ISO 8601 : "2026-05-20T09:00:00"
+  -- NB : created_by reste en texte brut (champ purement informatif, la
+  -- correspondance par nom vers employes serait trop peu fiable pour migrer
+  -- sans risque de corruption). Candidat à une future migration vers une FK.
   CREATE TABLE IF NOT EXISTS evenements (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     titre       TEXT NOT NULL,
@@ -170,10 +232,139 @@ db.exec(`
   );
 `);
 
-// Migration : ajouter password_hash si la colonne n'existe pas encore (base existante)
-const cols = db.prepare("PRAGMA table_info(employes)").all().map(c => c.name);
-if (!cols.includes('password_hash')) {
-  db.exec("ALTER TABLE employes ADD COLUMN password_hash TEXT");
+// ═══════════════════════════════════════════════════════════════
+// Migrations idempotentes (bases existantes uniquement)
+// Chaque migration détecte l'état du schéma avant d'agir : sur une
+// base neuve ou déjà migrée, tout ce bloc est un no-op.
+// ═══════════════════════════════════════════════════════════════
+
+const tableColumns = table =>
+  db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+
+const tableExists = table =>
+  !!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+
+// ── Migration 1 : employes.password_hash (bases très anciennes) ──
+if (!tableColumns('employes').includes('password_hash')) {
+  db.exec('ALTER TABLE employes ADD COLUMN password_hash TEXT');
+}
+
+// ── Migration 2 : employes.departement (TEXT) → departement_id (FK) ──
+// Les départements sont créés depuis les valeurs texte distinctes existantes,
+// puis chaque employé est rattaché par id : aucune donnée n'est perdue.
+{
+  const cols = tableColumns('employes');
+  if (cols.includes('departement')) {
+    db.transaction(() => {
+      if (!cols.includes('departement_id')) {
+        db.exec('ALTER TABLE employes ADD COLUMN departement_id INTEGER REFERENCES departements(id) ON DELETE SET NULL');
+      }
+      const noms = db.prepare(
+        "SELECT DISTINCT TRIM(departement) AS nom FROM employes WHERE departement IS NOT NULL AND TRIM(departement) != ''"
+      ).all();
+      const insertDep = db.prepare('INSERT OR IGNORE INTO departements (nom) VALUES (?)');
+      const linkDep   = db.prepare(`
+        UPDATE employes SET departement_id = (SELECT id FROM departements WHERE nom = ?)
+        WHERE TRIM(departement) = ? AND departement_id IS NULL
+      `);
+      for (const { nom } of noms) {
+        insertDep.run(nom);
+        linkDep.run(nom, nom);
+      }
+      db.exec('ALTER TABLE employes DROP COLUMN departement');
+    })();
+    console.log('✅ Migration : employes.departement → departement_id (FK)');
+  }
+}
+
+// ── Migration 3 : ancienne table todos (notes rapides) → post-its ──
+// L'ancien schéma (titre/description/priorite) est reconstruit vers le
+// nouveau (content/color/created_by/status). Le contenu est préservé ;
+// les todos legacy sont rattachés au premier admin (sinon ils ne seraient
+// visibles par personne, la lecture étant filtrée par créateur/assigné).
+if (tableColumns('todos').includes('titre')) {
+  db.transaction(() => {
+    // RENAME TO réécrit les clauses REFERENCES des autres tables : on
+    // supprime la table de jointure (forcément vide à ce stade, elle vient
+    // d'être créée) avant le rename, et on la recrée après, pour qu'elle
+    // pointe bien vers la nouvelle table todos.
+    db.exec('DROP TABLE IF EXISTS todo_assignees');
+    db.exec('ALTER TABLE todos RENAME TO todos_legacy_migration');
+    db.exec(TODOS_SCHEMA);
+    db.exec(TODO_ASSIGNEES_SCHEMA);
+    const admin = db.prepare("SELECT id FROM employes WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+    db.prepare(`
+      INSERT INTO todos (content, created_by, status, created_at)
+      SELECT
+        titre || CASE WHEN description IS NOT NULL AND description != '' THEN ' — ' || description ELSE '' END,
+        ?,
+        CASE WHEN statut = 'terminé' THEN 'done' ELSE 'pending' END,
+        created_at
+      FROM todos_legacy_migration
+    `).run(admin?.id ?? null);
+    db.exec('DROP TABLE todos_legacy_migration');
+  })();
+  console.log('✅ Migration : todos (notes rapides) → todos (post-its)');
+}
+
+// ── Migration 4 : taches (legacy) → tasks (tâches de département) ──
+// Les anciennes tâches n'avaient pas de département : elles sont rattachées
+// à un département "Général" créé au besoin. L'ancien champ assignee (texte
+// libre) est préservé en annotation dans la description.
+if (tableExists('taches')) {
+  db.transaction(() => {
+    db.prepare('INSERT OR IGNORE INTO departements (nom) VALUES (?)').run('Général');
+    const depId = db.prepare('SELECT id FROM departements WHERE nom = ?').get('Général').id;
+    db.prepare(`
+      INSERT INTO tasks (title, description, department_id, status, created_at)
+      SELECT
+        titre,
+        CASE
+          WHEN assignee IS NOT NULL AND assignee != ''
+            THEN COALESCE(description || char(10), '') || '(Assigné legacy : ' || assignee || ')'
+          ELSE description
+        END,
+        ?,
+        CASE WHEN statut IN ('todo', 'in_progress', 'done') THEN statut ELSE 'todo' END,
+        created_at
+      FROM taches
+    `).run(depId);
+    db.exec('DROP TABLE taches');
+  })();
+  console.log('✅ Migration : taches → tasks (département "Général")');
+}
+
+// ── Migration 5 : planning.employe (TEXT) → employe_id (FK) ──
+// Backfill par correspondance de nom insensible à la casse ("Prénom Nom",
+// "Nom Prénom" ou "Nom" seul). Par prudence, la colonne texte n'est
+// supprimée que si TOUTES les lignes ont pu être appariées : sinon elle est
+// conservée et la migration se retentera au prochain démarrage (idempotent).
+if (tableColumns('planning').includes('employe')) {
+  const dropped = db.transaction(() => {
+    if (!tableColumns('planning').includes('employe_id')) {
+      db.exec('ALTER TABLE planning ADD COLUMN employe_id INTEGER REFERENCES employes(id) ON DELETE CASCADE');
+    }
+    db.exec(`
+      UPDATE planning SET employe_id = (
+        SELECT e.id FROM employes e
+        WHERE LOWER(TRIM(COALESCE(e.prenom, '') || ' ' || e.nom)) = LOWER(TRIM(planning.employe))
+           OR LOWER(TRIM(e.nom || ' ' || COALESCE(e.prenom, ''))) = LOWER(TRIM(planning.employe))
+           OR LOWER(TRIM(e.nom)) = LOWER(TRIM(planning.employe))
+        LIMIT 1
+      )
+      WHERE employe_id IS NULL
+    `);
+    const orphans = db.prepare(
+      "SELECT COUNT(*) AS n FROM planning WHERE employe_id IS NULL AND employe IS NOT NULL AND TRIM(employe) != ''"
+    ).get().n;
+    if (orphans === 0) {
+      db.exec('ALTER TABLE planning DROP COLUMN employe');
+      return true;
+    }
+    console.warn(`⚠️  Migration planning : ${orphans} créneau(x) sans employé correspondant — colonne texte conservée`);
+    return false;
+  })();
+  if (dropped) console.log('✅ Migration : planning.employe → employe_id (FK)');
 }
 
 // Seed : créer un compte admin depuis les variables d'env s'il n'en existe aucun
