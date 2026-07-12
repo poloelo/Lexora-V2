@@ -33,12 +33,15 @@ const fmtDate = d =>
   d ? new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) : '—';
 
 // ── Sous-composant : répertoire des employés ───────────────
+const FORM_EMPLOYE_VIDE = { nom: '', prenom: '', poste: '', email: '', password: '', departement_id: '', role: 'employe' };
+
 function Employes() {
-  const [employes, setEmployes] = useState([]);
-  const [form, setForm]         = useState({ nom: '', prenom: '', poste: '', email: '', password: '' });
-  const [loading, setLoading]   = useState(true);
-  const [saving, setSaving]     = useState(false);
-  const [search, setSearch]     = useState('');
+  const [employes, setEmployes]         = useState([]);
+  const [departements, setDepartements] = useState([]);
+  const [form, setForm]                 = useState(FORM_EMPLOYE_VIDE);
+  const [loading, setLoading]           = useState(true);
+  const [saving, setSaving]             = useState(false);
+  const [search, setSearch]             = useState('');
   const toast = useToast();
   const { authHeaders } = useAuth();
 
@@ -50,7 +53,13 @@ function Employes() {
       .then(data => { setEmployes(Array.isArray(data) ? data : []); setLoading(false); })
       .catch(() => { toast('Impossible de charger les employés', 'error'); setLoading(false); });
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    fetch('/api/departements', { headers: authHeaders })
+      .then(r => (r.ok ? r.json() : []))
+      .then(data => setDepartements(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
 
   const handleChange = e => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
@@ -62,7 +71,10 @@ function Employes() {
       const res = await fetch('/api/employes', {
         method: 'POST',
         headers: adminHeaders,
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          departement_id: form.departement_id ? Number(form.departement_id) : null,
+        }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -70,7 +82,7 @@ function Employes() {
         setSaving(false);
         return;
       }
-      setForm({ nom: '', prenom: '', poste: '', email: '', password: '' });
+      setForm(FORM_EMPLOYE_VIDE);
       await load();
       toast('Employé ajouté');
     } catch {
@@ -103,6 +115,15 @@ function Employes() {
         <input name="poste"    placeholder="Poste"           value={form.poste}    onChange={handleChange} />
         <input name="email"    placeholder="Email *"         value={form.email}    onChange={handleChange} type="email" required />
         <input name="password" placeholder="Mot de passe *"  value={form.password} onChange={handleChange} type="password" required />
+        <select name="departement_id" value={form.departement_id} onChange={handleChange}>
+          <option value="">Sans département</option>
+          {departements.map(d => <option key={d.id} value={d.id}>{d.nom}</option>)}
+        </select>
+        <select name="role" value={form.role} onChange={handleChange}>
+          <option value="employe">Employé</option>
+          <option value="manager">Manager</option>
+          <option value="admin">Admin</option>
+        </select>
         <button type="submit" disabled={saving}>
           {saving ? <><span className="spinner" /> Ajout...</> : '+ Ajouter'}
         </button>
@@ -145,7 +166,12 @@ function Employes() {
                   {e.email && ` · ${e.email}`}
                 </span>
               </div>
-              <button className="danger" onClick={() => supprimer(e.id)}>Supprimer</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {e.departement_nom && <span className="badge badge-in-progress">{e.departement_nom}</span>}
+                {e.role === 'admin'   && <span className="badge badge-cancelled">Admin</span>}
+                {e.role === 'manager' && <span className="badge badge-paid">Manager</span>}
+                <button className="danger" onClick={() => supprimer(e.id)}>Supprimer</button>
+              </div>
             </div>
           ))}
         </div>
@@ -155,15 +181,17 @@ function Employes() {
 }
 
 // ── Sous-composant : planning des horaires ─────────────────
-const FORM_PLANNING_VIDE = { employe: '', date: '', heure_debut: '', heure_fin: '', projet: '' };
+const FORM_PLANNING_VIDE = { employe_id: '', date: '', heure_debut: '', heure_fin: '', projet: '' };
 
 function Planning() {
-  const [entries, setEntries] = useState([]);
-  const [form, setForm]       = useState(FORM_PLANNING_VIDE);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving]   = useState(false);
-  const [search, setSearch]   = useState('');
+  const [entries, setEntries]   = useState([]);
+  const [employes, setEmployes] = useState([]);
+  const [form, setForm]         = useState(FORM_PLANNING_VIDE);
+  const [loading, setLoading]   = useState(true);
+  const [saving, setSaving]     = useState(false);
+  const [search, setSearch]     = useState('');
   const toast = useToast();
+  const { authHeaders } = useAuth();
 
   const load = () =>
     fetch('/api/planning')
@@ -171,7 +199,14 @@ function Planning() {
       .then(data => { setEntries(Array.isArray(data) ? data : []); setLoading(false); })
       .catch(() => { toast('Impossible de charger le planning', 'error'); setLoading(false); });
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    // Annuaire minimal (id + nom) pour le sélecteur d'employé
+    fetch('/api/employes/selector', { headers: authHeaders })
+      .then(r => (r.ok ? r.json() : []))
+      .then(data => setEmployes(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
 
   const handleChange = e => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
@@ -182,7 +217,7 @@ function Planning() {
       await fetch('/api/planning', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, employe_id: Number(form.employe_id) }),
       });
       setForm(FORM_PLANNING_VIDE);
       await load();
@@ -205,14 +240,17 @@ function Planning() {
   };
 
   const filtered = entries.filter(e =>
-    e.employe?.toLowerCase().includes(search.toLowerCase()) ||
+    e.employe_nom?.toLowerCase().includes(search.toLowerCase()) ||
     e.projet?.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
     <div>
       <form onSubmit={handleSubmit}>
-        <input name="employe"    placeholder="Employé *" value={form.employe}    onChange={handleChange} required />
+        <select name="employe_id" value={form.employe_id} onChange={handleChange} required>
+          <option value="">Employé *</option>
+          {employes.map(emp => <option key={emp.id} value={emp.id}>{emp.nom}</option>)}
+        </select>
         <input name="date"       type="date"              value={form.date}       onChange={handleChange} required />
         <input name="heure_debut" type="time"             value={form.heure_debut} onChange={handleChange} required />
         <input name="heure_fin"  type="time"              value={form.heure_fin}  onChange={handleChange} required />
@@ -247,7 +285,9 @@ function Planning() {
           )}
           {!loading && filtered.map(e => (
             <tr key={e.id}>
-              <td style={{ fontWeight: 500 }}>{e.employe}</td>
+              {/* employe_nom vient de la jointure backend ; e.employe est le
+                  reliquat texte des bases partiellement migrées */}
+              <td style={{ fontWeight: 500 }}>{e.employe_nom || e.employe || '—'}</td>
               <td style={{ color: '#555' }}>{fmtDate(e.date)}</td>
               <td>{e.heure_debut}</td>
               <td>{e.heure_fin}</td>

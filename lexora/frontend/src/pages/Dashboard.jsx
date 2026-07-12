@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { useAuth } from '../contexts/AuthContext.jsx';
 
 function useCountUp(target, duration = 900) {
   const [value, setValue] = useState(0);
@@ -66,13 +67,16 @@ const STATUT_FACTURE = {
 };
 
 export default function Dashboard() {
+  const { authHeaders } = useAuth();
   const [taches, setTaches] = useState([]);
   const [factures, setFactures] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/taches').then(r => r.json()).catch(() => []),
+      // /api/tasks est protégé par JWT : sans connexion, les stats tombent à zéro
+      fetch('/api/tasks', { headers: authHeaders })
+        .then(r => (r.ok ? r.json() : [])).catch(() => []),
       fetch('/api/factures').then(r => r.json()).catch(() => []),
     ]).then(([t, f]) => {
       setTaches(Array.isArray(t) ? t : []);
@@ -81,7 +85,7 @@ export default function Dashboard() {
     });
   }, []);
 
-  const tachesEnCours    = taches.filter(t => t.statut === 'in_progress').length;
+  const tachesEnCours    = taches.filter(t => t.status === 'in_progress').length;
   const facturesImpayees = factures.filter(f => f.statut === 'en attente').length;
   const totalFactures    = factures.reduce((s, f) => s + (f.montant || 0), 0);
 
@@ -126,8 +130,8 @@ export default function Dashboard() {
           {recentTaches.length === 0 ? (
             <div className="empty-state"><p>Aucune tâche</p></div>
           ) : recentTaches.map(t => {
-            const s = STATUT_TACHE[t.statut] || { label: t.statut, cls: 'badge-todo' };
-            return <RecentItem key={t.id} name={t.titre} badge={s.label} badgeClass={s.cls} />;
+            const s = STATUT_TACHE[t.status] || { label: t.status, cls: 'badge-todo' };
+            return <RecentItem key={t.id} name={t.title} badge={s.label} badgeClass={s.cls} />;
           })}
         </div>
 

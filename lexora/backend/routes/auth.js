@@ -23,12 +23,17 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ error: 'Identifiants incorrects' });
   }
 
+  // NB : rôle et département servent uniquement à adapter l'interface ;
+  // les autorisations sont revérifiées côté serveur à chaque requête
+  // (middleware loadUser), un token périmé ne donne donc aucun droit.
   const payload = {
-    id:     employe.id,
-    email:  employe.email,
-    role:   employe.role,
-    nom:    employe.nom,
-    prenom: employe.prenom,
+    id:             employe.id,
+    email:          employe.email,
+    role:           employe.role,
+    nom:            employe.nom,
+    prenom:         employe.prenom,
+    poste:          employe.poste,
+    departement_id: employe.departement_id,
   };
 
   const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
