@@ -1,291 +1,323 @@
 /**
- * Taches.jsx — Gestion des tâches (projets + rapides)
+ * Taches.jsx — Tâches de département (vue kanban)
  *
- * Cette page regroupe deux concepts proches :
- *  - Les "Tâches projet" : tâches avec assignee, statut, description → /api/taches
- *  - Les "Rapides" (anciens Todos) : notes courtes, priorité → /api/todos
+ * Trois colonnes (À faire / En cours / Terminé) alimentées par /api/tasks.
+ * Le backend filtre déjà par département : un employé ne voit que les tâches
+ * de son département, un admin voit tout (avec un sélecteur de département).
  *
- * On utilise le composant <Tabs> pour basculer entre les deux vues
- * sans changer de page, ce qui simplifie la navigation.
+ * Changement de statut : drag & drop natif HTML5 entre les colonnes, avec
+ * un menu déroulant de secours sur chaque carte. Les deux sont optimistes :
+ * l'interface bouge immédiatement, et revient en arrière si l'API échoue.
+ *
+ * Création/suppression : réservées aux rôles manager (son département) et
+ * admin — le backend fait autorité, l'interface ne fait que cacher les boutons.
  */
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '../contexts/AuthContext.jsx';
 import { useToast } from '../contexts/ToastContext.jsx';
-import Tabs from '../components/Tabs.jsx';
 
-// ── Valeurs par défaut du formulaire de tâche ──────────────
-const FORM_VIDE = { titre: '', description: '', statut: 'todo', assignee: '' };
+const COLONNES = [
+  { status: 'todo',        label: 'À faire',  icon: '○' },
+  { status: 'in_progress', label: 'En cours', icon: '◐' },
+  { status: 'done',        label: 'Terminé',  icon: '●' },
+];
 
-// Mapping statut → affichage badge (label + classe CSS)
-const STATUTS_TACHE = {
-  todo:        { label: 'À faire',  cls: 'badge-todo' },
-  in_progress: { label: 'En cours', cls: 'badge-in-progress' },
-  done:        { label: 'Terminé',  cls: 'badge-done' },
+const PRIORITES = {
+  low:    { label: 'Basse',   cls: 'badge-prio-low' },
+  medium: { label: 'Moyenne', cls: 'badge-prio-medium' },
+  high:   { label: 'Haute',   cls: 'badge-prio-high' },
 };
 
-function StatusBadge({ statut }) {
-  const s = STATUTS_TACHE[statut] ?? { label: statut, cls: 'badge-todo' };
-  return <span className={`badge ${s.cls}`}>{s.label}</span>;
+const FORM_VIDE = { title: '', description: '', department_id: '', priority: 'medium', due_date: '' };
+
+const fmtDue = d =>
+  d ? new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : null;
+
+// ── Carte de tâche (draggable) ─────────────────────────────
+function TaskCard({ task, canManage, isAdminView, onStatusChange, onDelete }) {
+  const prio = PRIORITES[task.priority] ?? PRIORITES.medium;
+  const enRetard = task.due_date && task.status !== 'done' && task.due_date < new Date().toISOString().slice(0, 10);
+
+  return (
+    <div
+      className="kanban-card"
+      draggable
+      onDragStart={e => {
+        e.dataTransfer.setData('text/task-id', String(task.id));
+        e.dataTransfer.effectAllowed = 'move';
+        e.currentTarget.classList.add('dragging');
+      }}
+      onDragEnd={e => e.currentTarget.classList.remove('dragging')}
+    >
+      <div className="kanban-card-top">
+        <span className={`badge ${prio.cls}`}>{prio.label}</span>
+        {canManage && (
+          <button className="kanban-card-delete" title="Supprimer" onClick={() => onDelete(task)}>✕</button>
+        )}
+      </div>
+      <div className="kanban-card-title">{task.title}</div>
+      {task.description && <div className="kanban-card-desc">{task.description}</div>}
+      <div className="kanban-card-meta">
+        {isAdminView && <span className="kanban-card-dep">{task.department_nom}</span>}
+        {task.due_date && (
+          <span className={`kanban-card-due${enRetard ? ' late' : ''}`}>⏱ {fmtDue(task.due_date)}</span>
+        )}
+      </div>
+      {/* Menu déroulant de secours pour le changement de statut (accessibilité,
+          écrans tactiles) — même action que le drag & drop */}
+      <select
+        className={`statut-select statut-${task.status}`}
+        value={task.status}
+        onChange={e => onStatusChange(task, e.target.value)}
+      >
+        {COLONNES.map(c => <option key={c.status} value={c.status}>{c.label}</option>)}
+      </select>
+    </div>
+  );
 }
 
-// ── Sous-composant : liste des tâches projet ───────────────
-function TachesProjet() {
-  const [taches, setTaches]   = useState([]);
-  const [form, setForm]       = useState(FORM_VIDE);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving]   = useState(false);
-  const [search, setSearch]   = useState('');
+// ── Page principale ────────────────────────────────────────
+export default function Taches() {
+  const { user, authHeaders, isAuthenticated } = useAuth();
   const toast = useToast();
 
-  // Charge toutes les tâches depuis le backend
-  // useEffect avec [] = s'exécute une seule fois au montage du composant
-  const load = () =>
-    fetch('/api/taches')
-      .then(r => r.json())
-      .then(data => { setTaches(Array.isArray(data) ? data : []); setLoading(false); })
-      .catch(() => { toast('Impossible de charger les tâches', 'error'); setLoading(false); });
+  const [tasks, setTasks]               = useState([]);
+  const [departements, setDepartements] = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [prioFilter, setPrioFilter]     = useState('');       // '' = toutes
+  const [depFilter, setDepFilter]       = useState('');       // admin uniquement, '' = tous
+  const [modalOpen, setModalOpen]       = useState(false);
+  const [form, setForm]                 = useState(FORM_VIDE);
+  const [saving, setSaving]             = useState(false);
 
-  useEffect(() => { load(); }, []);
+  const isAdmin   = user?.role === 'admin';
+  const isManager = user?.role === 'manager';
+  const canCreate = isAdmin || isManager;
 
-  // Met à jour seulement le champ modifié dans le formulaire
-  // [e.target.name] est une "computed property key" : le nom de la propriété est dynamique
-  const handleChange = e => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  const load = () => {
+    const params = new URLSearchParams();
+    if (isAdmin && depFilter) params.set('department_id', depFilter);
+    fetch(`/api/tasks?${params}`, { headers: authHeaders })
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(data => { setTasks(Array.isArray(data) ? data : []); setLoading(false); })
+      .catch(() => { setTasks([]); setLoading(false); });
+  };
 
-  const handleSubmit = async e => {
-    e.preventDefault(); // Empêche le rechargement de la page (comportement par défaut du form)
-    setSaving(true);
+  useEffect(() => {
+    if (!isAuthenticated) { setLoading(false); return; }
+    load();
+    fetch('/api/departements', { headers: authHeaders })
+      .then(r => (r.ok ? r.json() : []))
+      .then(data => setDepartements(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, [isAuthenticated, depFilter]);
+
+  // Changement de statut optimiste : on applique localement tout de suite,
+  // et on restaure l'état précédent si le serveur refuse.
+  const changeStatus = async (task, status) => {
+    if (task.status === status) return;
+    const previous = tasks;
+    setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, status } : t)));
     try {
-      await fetch('/api/taches', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+      const res = await fetch(`/api/tasks/${task.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ status }),
       });
-      setForm(FORM_VIDE);
-      await load();
-      toast('Tâche ajoutée');
+      if (!res.ok) throw new Error();
     } catch {
-      toast('Erreur lors de l\'ajout', 'error');
-    } finally {
-      // finally s'exécute toujours, succès ou erreur
-      setSaving(false);
+      setTasks(previous);
+      toast('Impossible de changer le statut', 'error');
     }
   };
 
-  const handleDelete = async id => {
+  const handleDelete = async task => {
     try {
-      await fetch(`/api/taches/${id}`, { method: 'DELETE' });
-      setTaches(prev => prev.filter(t => t.id !== id));
+      const res = await fetch(`/api/tasks/${task.id}`, { method: 'DELETE', headers: authHeaders });
+      if (!res.ok) throw new Error();
+      setTasks(prev => prev.filter(t => t.id !== task.id));
       toast('Tâche supprimée');
     } catch {
       toast('Erreur lors de la suppression', 'error');
     }
   };
 
-  const handleStatutChange = async (tache, newStatut) => {
-    try {
-      const res = await fetch(`/api/taches/${tache.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...tache, statut: newStatut }),
-      });
-      if (!res.ok) throw new Error();
-      setTaches(prev => prev.map(t => t.id === tache.id ? { ...t, statut: newStatut } : t));
-      toast('Statut mis à jour');
-    } catch {
-      toast('Erreur lors de la mise à jour', 'error');
-    }
+  const handleChange = e => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+
+  const openModal = () => {
+    // Un manager crée toujours dans son propre département
+    setForm({ ...FORM_VIDE, department_id: isManager ? (user?.departement_id ?? '') : '' });
+    setModalOpen(true);
   };
 
-  // filter() crée un nouveau tableau avec seulement les éléments qui passent le test
-  const filtered = taches.filter(t =>
-    t.titre?.toLowerCase().includes(search.toLowerCase()) ||
-    t.assignee?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  return (
-    <div>
-      {/* Formulaire d'ajout */}
-      <form onSubmit={handleSubmit}>
-        <input name="titre"       placeholder="Titre *"       value={form.titre}       onChange={handleChange} required />
-        <input name="description" placeholder="Description"   value={form.description} onChange={handleChange} style={{ minWidth: 180 }} />
-        <select name="statut" value={form.statut} onChange={handleChange}>
-          <option value="todo">À faire</option>
-          <option value="in_progress">En cours</option>
-          <option value="done">Terminé</option>
-        </select>
-        <input name="assignee" placeholder="Assigné à" value={form.assignee} onChange={handleChange} />
-        <button type="submit" disabled={saving}>
-          {saving ? <><span className="spinner" /> Ajout...</> : '+ Ajouter'}
-        </button>
-      </form>
-
-      {/* Barre de recherche + compteur */}
-      <div className="page-toolbar">
-        <input className="search-input" placeholder="Rechercher..." value={search} onChange={e => setSearch(e.target.value)} />
-        <span className="record-count">{filtered.length} tâche{filtered.length !== 1 ? 's' : ''}</span>
-      </div>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Titre</th>
-            <th>Description</th>
-            <th>Statut</th>
-            <th>Assigné à</th>
-            <th>Créé le</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading && (
-            <tr className="loading-row">
-              <td colSpan="6"><span className="spinner dark" /> Chargement...</td>
-            </tr>
-          )}
-          {!loading && filtered.map(t => (
-            <tr key={t.id}>
-              <td style={{ fontWeight: 500 }}>{t.titre}</td>
-              <td style={{ color: '#666' }}>{t.description || <span style={{ color: '#ccc' }}>—</span>}</td>
-              <td>
-                <select
-                  value={t.statut}
-                  onChange={e => handleStatutChange(t, e.target.value)}
-                  className={`statut-select statut-${t.statut}`}
-                >
-                  <option value="todo">À faire</option>
-                  <option value="in_progress">En cours</option>
-                  <option value="done">Terminé</option>
-                </select>
-              </td>
-              <td>{t.assignee || <span style={{ color: '#ccc' }}>—</span>}</td>
-              <td style={{ color: '#999', fontSize: '0.84rem' }}>
-                {t.created_at ? new Date(t.created_at).toLocaleDateString('fr-FR') : '—'}
-              </td>
-              <td>
-                <button className="danger" onClick={() => handleDelete(t.id)}>Supprimer</button>
-              </td>
-            </tr>
-          ))}
-          {!loading && filtered.length === 0 && (
-            <tr><td colSpan="6">
-              <div className="empty-state">
-                <div className="empty-state-icon">✓</div>
-                <p>{search ? 'Aucun résultat pour cette recherche' : 'Aucune tâche pour le moment'}</p>
-              </div>
-            </td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ── Sous-composant : todos rapides ─────────────────────────
-function TodosRapides() {
-  const [todos, setTodos]     = useState([]);
-  const [titre, setTitre]     = useState('');
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving]   = useState(false);
-  const toast = useToast();
-
-  const load = () =>
-    fetch('/api/todos')
-      .then(r => r.json())
-      .then(data => { setTodos(Array.isArray(data) ? data : []); setLoading(false); })
-      .catch(() => { toast('Impossible de charger les todos', 'error'); setLoading(false); });
-
-  useEffect(() => { load(); }, []);
-
-  const ajouter = async e => {
+  const handleSubmit = async e => {
     e.preventDefault();
-    if (!titre.trim()) return;
     setSaving(true);
     try {
-      await fetch('/api/todos', {
+      const res = await fetch('/api/tasks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ titre }),
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({
+          ...form,
+          department_id: Number(form.department_id),
+          description: form.description || null,
+          due_date: form.due_date || null,
+        }),
       });
-      setTitre('');
-      await load();
-      toast('Todo ajouté');
-    } catch {
-      toast('Erreur lors de l\'ajout', 'error');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setTasks(prev => [data, ...prev]);
+      setModalOpen(false);
+      toast('Tâche créée');
+    } catch (err) {
+      toast(err.message || 'Erreur lors de la création', 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  const supprimer = async id => {
-    try {
-      await fetch(`/api/todos/${id}`, { method: 'DELETE' });
-      setTodos(prev => prev.filter(t => t.id !== id));
-      toast('Todo supprimé');
-    } catch {
-      toast('Erreur lors de la suppression', 'error');
-    }
-  };
+  const visible = tasks.filter(t => !prioFilter || t.priority === prioFilter);
 
-  return (
-    <div>
-      {/* Formulaire simplifié : juste un titre */}
-      <form onSubmit={ajouter}>
-        <input
-          value={titre}
-          onChange={e => setTitre(e.target.value)}
-          placeholder="Nouvelle note rapide..."
-          style={{ flex: 1, minWidth: 260 }}
-        />
-        <button type="submit" disabled={saving}>
-          {saving ? <><span className="spinner" /> Ajout...</> : '+ Ajouter'}
-        </button>
-      </form>
+  if (!isAuthenticated) {
+    return (
+      <div className="page-enter">
+        <h1>Tâches</h1>
+        <p className="page-subtitle">Tâches de département</p>
+        <div className="empty-state">
+          <div className="empty-state-icon">✓</div>
+          <p>Connectez-vous pour voir les tâches de votre département</p>
+        </div>
+      </div>
+    );
+  }
 
-      {loading ? (
-        <div className="client-list">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="client-item">
-              <div className="skeleton" style={{ width: '55%', height: 15 }} />
-            </div>
-          ))}
-        </div>
-      ) : todos.length === 0 ? (
-        <div className="client-list">
-          <div className="empty-state">
-            <div className="empty-state-icon">☑</div>
-            <p>Aucune note rapide</p>
-          </div>
-        </div>
-      ) : (
-        <div className="client-list">
-          {todos.map(t => (
-            <div key={t.id} className="client-item">
-              <span style={{ fontWeight: 500 }}>{t.titre}</span>
-              <button className="danger" onClick={() => supprimer(t.id)}>Supprimer</button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Page principale exportée ───────────────────────────────
-export default function Taches() {
   return (
     <div className="page-enter">
       <h1>Tâches</h1>
-      <p className="page-subtitle">Gestion des tâches projet et notes rapides</p>
+      <p className="page-subtitle">
+        {isAdmin ? 'Toutes les tâches de département' : 'Les tâches de votre département'}
+      </p>
 
-      {/*
-        Le composant Tabs reçoit :
-        - tabs : les labels des onglets
-        - children : les composants à afficher pour chaque onglet (dans le même ordre)
-      */}
-      <Tabs tabs={['Tâches projet', 'Notes rapides']}>
-        <TachesProjet />
-        <TodosRapides />
-      </Tabs>
+      {/* Barre d'outils : filtres + création */}
+      <div className="page-toolbar kanban-toolbar">
+        <div className="kanban-filters">
+          <button className={!prioFilter ? 'btn-filter active' : 'btn-filter'} onClick={() => setPrioFilter('')}>Toutes</button>
+          {Object.entries(PRIORITES).map(([value, p]) => (
+            <button
+              key={value}
+              className={prioFilter === value ? 'btn-filter active' : 'btn-filter'}
+              onClick={() => setPrioFilter(value)}
+            >{p.label}</button>
+          ))}
+          {isAdmin && (
+            <select value={depFilter} onChange={e => setDepFilter(e.target.value)} className="kanban-dep-select">
+              <option value="">Tous les départements</option>
+              {departements.map(d => <option key={d.id} value={d.id}>{d.nom}</option>)}
+            </select>
+          )}
+        </div>
+        <span className="record-count">{visible.length} tâche{visible.length !== 1 ? 's' : ''}</span>
+        {canCreate && <button onClick={openModal}>+ Nouvelle tâche</button>}
+      </div>
+
+      {/* Tableau kanban */}
+      {loading ? (
+        <div className="kanban-board">
+          {COLONNES.map(c => (
+            <div key={c.status} className="kanban-col">
+              <div className="kanban-col-header">{c.icon} {c.label}</div>
+              <div className="skeleton" style={{ height: 90, borderRadius: 10 }} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="kanban-board">
+          {COLONNES.map(col => {
+            const items = visible.filter(t => t.status === col.status);
+            return (
+              <div
+                key={col.status}
+                className="kanban-col"
+                onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }}
+                onDragLeave={e => e.currentTarget.classList.remove('drag-over')}
+                onDrop={e => {
+                  e.preventDefault();
+                  e.currentTarget.classList.remove('drag-over');
+                  const id = Number(e.dataTransfer.getData('text/task-id'));
+                  const task = tasks.find(t => t.id === id);
+                  if (task) changeStatus(task, col.status);
+                }}
+              >
+                <div className="kanban-col-header">
+                  {col.icon} {col.label}
+                  <span className="kanban-col-count">{items.length}</span>
+                </div>
+                {items.map(t => (
+                  <TaskCard
+                    key={t.id}
+                    task={t}
+                    isAdminView={isAdmin && !depFilter}
+                    canManage={isAdmin || (isManager && t.department_id === user?.departement_id)}
+                    onStatusChange={changeStatus}
+                    onDelete={handleDelete}
+                  />
+                ))}
+                {items.length === 0 && <div className="kanban-empty">Déposez une tâche ici</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modal de création */}
+      {modalOpen && (
+        <div className="modal-backdrop" onClick={() => setModalOpen(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Nouvelle tâche</span>
+              <button className="modal-close" onClick={() => setModalOpen(false)}>✕</button>
+            </div>
+            <form onSubmit={handleSubmit}>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label>Titre *</label>
+                  <input name="title" value={form.title} onChange={handleChange} required autoFocus />
+                </div>
+                <div className="form-group">
+                  <label>Description</label>
+                  <textarea name="description" rows="3" value={form.description} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label>Département *</label>
+                  <select name="department_id" value={form.department_id} onChange={handleChange} required disabled={isManager}>
+                    <option value="">— Choisir —</option>
+                    {departements.map(d => <option key={d.id} value={d.id}>{d.nom}</option>)}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Priorité</label>
+                  <select name="priority" value={form.priority} onChange={handleChange}>
+                    {Object.entries(PRIORITES).map(([value, p]) => (
+                      <option key={value} value={value}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Échéance</label>
+                  <input name="due_date" type="date" value={form.due_date} onChange={handleChange} />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="secondary" onClick={() => setModalOpen(false)}>Annuler</button>
+                <button type="submit" disabled={saving}>
+                  {saving ? <><span className="spinner" /> Création...</> : 'Créer la tâche'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

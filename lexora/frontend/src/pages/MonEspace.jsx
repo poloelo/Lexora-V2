@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { useToast } from '../contexts/ToastContext.jsx';
+import PostItWall from '../components/PostItWall.jsx';
 
 const fmtDate = d =>
   d ? new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) : '—';
@@ -26,22 +27,19 @@ export default function MonEspace() {
   const [loading, setLoading]     = useState(true);
   const [filtre, setFiltre]       = useState('a_venir'); // 'a_venir' | 'tous'
 
-  const nomComplet = [user?.prenom, user?.nom].filter(Boolean).join(' ');
-
   useEffect(() => {
     fetch('/api/planning')
       .then(r => r.json())
       .then(data => {
         const all = Array.isArray(data) ? data : [];
-        // Filtre les entrées qui correspondent au nom de cet employé
-        const miennes = all.filter(e =>
-          e.employe?.toLowerCase().trim() === nomComplet.toLowerCase().trim()
-        );
+        // Filtre par clé étrangère : fiable même en cas d'homonymes
+        // (remplace l'ancien matching fragile par nom en texte brut)
+        const miennes = all.filter(e => e.employe_id === user?.id);
         setPlanning(miennes);
         setLoading(false);
       })
       .catch(() => { toast('Erreur lors du chargement du planning', 'error'); setLoading(false); });
-  }, [nomComplet]);
+  }, [user?.id]);
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
@@ -82,6 +80,10 @@ export default function MonEspace() {
           )}
         </div>
       )}
+
+      {/* Mur de post-its (todos personnels) */}
+      <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '1.5rem 0 0.75rem' }}>📌 Mes post-its</h2>
+      <PostItWall />
 
       {/* Tableau planning */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', margin: '1.5rem 0 0.75rem' }}>
