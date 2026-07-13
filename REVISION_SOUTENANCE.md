@@ -121,7 +121,7 @@ Lexora-V2/
         ├── vite.config.js                # Plugin React + proxy /api → localhost:3000 (dev)
         └── src/
             ├── main.jsx                  # createRoot + BrowserRouter + StrictMode
-            ├── App.jsx                   # Routes, Sidebar, gardes PrivateRoute/AdminRoute
+            ├── App.jsx                   # Routes, Sidebar, garde AdminRoute
             ├── index.css                 # Feuille de style globale unique
             ├── contexts/
             │   ├── AuthContext.jsx       # État global auth : token, user, login(), logout(), authHeaders
@@ -130,14 +130,15 @@ Lexora-V2/
             │   ├── Tabs.jsx              # Onglets réutilisables (Clients/Factures, Équipe)
             │   └── PostItWall.jsx        # Mur de post-its (todos) avec toggle optimiste
             └── pages/                    # 1 fichier = 1 écran de la sidebar
-                ├── Dashboard.jsx         # KPI animés (useCountUp) + listes récentes
+                ├── Dashboard.jsx         # Accueil unifié : KPI animés (useCountUp) + post-its
+                │                         #  + planning personnel + listes récentes
+                │                         #  (fusion de l'ancienne page "Mon espace")
                 ├── Taches.jsx            # Kanban 3 colonnes, drag & drop HTML5
                 ├── ClientsFactures.jsx   # 2 onglets : CRM + factures
                 ├── Calendrier.jsx        # react-big-calendar, fusion évènements+planning
                 ├── Coffre_fort.jsx       # Arborescence, drag & drop upload, fil d'Ariane
                 ├── Assistant.jsx         # Chat avec le LLM
                 ├── Equipe.jsx            # ADMIN : 3 onglets (Employés, Planning, Automations)
-                ├── MonEspace.jsx         # Espace employé : post-its + son planning
                 └── Login.jsx             # Formulaire de connexion
 ```
 
@@ -167,7 +168,7 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 | `DELETE /api/todos/:id` | todos.js | idem (créateur seul) | todos | `{ message }` |
 | `GET /api/departements` | departements.js | verifyJWT, loadUser | departements | Liste `{id, nom}` |
 | `POST/PUT/DELETE /api/departements` | departements.js | + requireRole(admin) | departements | CRUD |
-| `GET /api/employes/selector` | employes.js | + requireRole(manager, admin) | employes | `[{id, nom}]` minimal |
+| `GET /api/employes/selector` | employes.js | verifyJWT, loadUser (tout utilisateur authentifié) | employes | `[{id, nom}]` minimal |
 | `GET/POST/PUT/DELETE /api/employes` | employes.js | + requireRole(admin) | employes ⋈ departements | CRUD sans password_hash |
 | `PUT /api/employes/:id/password` | employes.js | + requireRole(admin) | employes | `{ message }` |
 | `GET/POST/PUT/DELETE /api/automations` | automations.js | verifyJWT seul | automations | CRUD |
@@ -186,17 +187,16 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 
 | Page (route) | Composants utilisés | Appels API (fetch) | Hooks / state clés |
 |---|---|---|---|
-| `App.jsx` (racine) | Sidebar, AuthProvider, ToastProvider, gardes | — | `useAuth` pour la garde et la carte utilisateur |
-| `Login.jsx` (`/login`) | — | `POST /api/auth/login` (via `login()` du AuthContext) | `form`, `error`, `loading` ; `useNavigate` redirige selon le rôle |
-| `Dashboard.jsx` (`/`) | StatCard (avec hook `useCountUp`), RecentItem | `GET /api/tasks` (avec JWT), `GET /api/factures` — en `Promise.all` | `taches`, `factures`, `loading` ; KPI calculés par `filter`/`reduce` |
+| `App.jsx` (racine) | Sidebar, AuthProvider, ToastProvider, garde AdminRoute | — | `useAuth` pour la garde et la carte utilisateur ; `/mon-espace` redirige vers `/` (fusion) |
+| `Login.jsx` (`/login`) | — | `POST /api/auth/login` (via `login()` du AuthContext) | `form`, `error`, `loading` ; `useNavigate` : admin → `/equipe`, sinon → `/` |
+| `Dashboard.jsx` (`/`) | StatCard (avec hook `useCountUp`), RecentItem, **PostItWall** | `GET /api/tasks` (avec JWT), `GET /api/factures`, `GET /api/planning` — en `Promise.all` ; planning filtré côté client par `employe_id === user.id` | `taches`, `factures`, `planning`, `filtre`, `loading` ; KPI par `filter`/`reduce` ; sections personnelles (post-its, planning) rendues seulement si `isAuthenticated` |
 | `Taches.jsx` (`/taches`) | TaskCard (draggable) | `GET /api/tasks?department_id=`, `GET /api/departements`, `POST /api/tasks`, `PATCH /api/tasks/:id/status`, `DELETE /api/tasks/:id` | `tasks`, `prioFilter`, `depFilter`, `modalOpen`, `form` ; **update optimiste** sur le statut |
 | `ClientsFactures.jsx` (`/business`) | Tabs → Clients, Factures, StatusBadge | `GET/POST/DELETE /api/clients`, `GET/POST/DELETE /api/factures` | Chaque onglet a son propre state (`clients`/`factures`, `form`, `search`) |
 | `Calendrier.jsx` (`/calendrier`) | `<Calendar>` (react-big-calendar), Modal | `GET /api/evenements` + `GET /api/planning` (fusionnés), `POST /api/evenements`, `DELETE /api/evenements/:id` | `events` (les 2 sources converties au format `{title, start, end}`), `showCreate`, `detail`, `form` |
 | `Coffre_fort.jsx` (`/documents`) | — (tout interne) | `GET /api/documents/dossiers`, `GET /api/documents`, `POST .../dossiers`, `POST .../upload` (FormData), `GET .../:id/download`, `DELETE` | `currentFolderId` (navigation), `dossiers`, `documents`, `dragActive` ; fil d'Ariane recalculé |
 | `Assistant.jsx` (`/assistant`) | — | `POST /api/assistant { prompt }` | `messages` (tableau {role, text, time}), `input`, `loading` ; auto-scroll via `useRef` |
 | `Equipe.jsx` (`/equipe`, **AdminRoute**) | Tabs → Employes, Planning, Automations | `GET/POST/DELETE /api/employes`, `GET /api/departements`, `GET /api/employes/selector`, `GET/POST/DELETE /api/planning`, `GET/POST/DELETE /api/automations` | Chaque onglet : liste + `form` + `search` ; headers admin = `authHeaders` |
-| `MonEspace.jsx` (`/mon-espace`, **PrivateRoute**) | PostItWall | `GET /api/planning` (filtré côté client par `employe_id === user.id`) | `planning`, `filtre` ('a_venir'/'tous') ; calcul du "prochain créneau" |
-| `PostItWall.jsx` (composant) | — | `GET/POST/DELETE /api/todos`, `PATCH /api/todos/:id/toggle`, `GET /api/employes/selector` (si manager/admin) | `todos`, `content`, `color`, `assignees` ; **toggle optimiste avec rollback** |
+| `PostItWall.jsx` (composant, rendu dans Dashboard) | — | `GET/POST/DELETE /api/todos`, `PATCH /api/todos/:id/toggle`, `GET /api/employes/selector` | `todos`, `content`, `color`, `assignees` ; **toggle optimiste avec rollback** |
 
 **Modèle mental à réciter** : *chaque page suit le même cycle : `useEffect` au montage → `fetch` → `setState` → rendu conditionnel (skeleton pendant `loading`, empty-state si vide, données sinon). Les mutations mettent à jour l'état local directement (ou rechargent via `load()`), et affichent un toast.*
 
@@ -270,7 +270,7 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 | Voir | créateur + assignés |
 | Modifier / supprimer | créateur uniquement |
 | Toggle fait/à faire | créateur OU assigné |
-| Assigner à autrui | manager / admin uniquement (un employé ne s'assigne qu'à lui-même) |
+| Assigner à autrui | tout utilisateur authentifié (esprit « mur de post-its » partagé ; sans assigné explicite, le post-it est pour soi-même) |
 
 **`getTodoWithAssignees(id)`** : charge le todo + la liste de ses assignés (2 requêtes). Ne renvoie que `id` + nom affichable des assignés — **minimisation des données** (pas d'email, pas de salaire).
 
@@ -339,9 +339,8 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 **Fil d'Ariane** (Coffre_fort.jsx `getBreadcrumbs`)
 - Remonte l'arborescence : depuis `currentFolderId`, boucle `while` sur `parent_id` jusqu'à `null` (racine), en insérant chaque dossier **au début** du tableau (`unshift`) pour avoir l'ordre racine → courant.
 
-**Gardes de route** (App.jsx)
-- `PrivateRoute` : rend les enfants si `isAuthenticated`, sinon `<Navigate to="/login" replace />` (`replace` : pas d'entrée dans l'historique, le bouton retour ne re-piège pas l'utilisateur).
-- `AdminRoute` : en plus, vérifie `user.role === 'admin'`, sinon redirige vers `/mon-espace`.
+**Garde de route** (App.jsx)
+- `AdminRoute` : rend les enfants si connecté **et** `user.role === 'admin'` ; sinon `<Navigate to="/login" replace />` ou vers `/` (`replace` : pas d'entrée dans l'historique, le bouton retour ne re-piège pas l'utilisateur). L'ancienne route `/mon-espace` redirige vers `/` depuis la fusion avec le Dashboard.
 - **À dire absolument** : ces gardes sont du **confort UX, pas de la sécurité** — n'importe qui peut modifier le JS du navigateur. La vraie barrière est côté serveur (verifyJWT + loadUser + requireRole).
 
 ---
@@ -384,7 +383,7 @@ Toutes les requêtes utilisent des **placeholders `?`** (`db.prepare('... WHERE 
 ### 5.6 RGPD / minimisation des données
 
 - **Droit à l'effacement** : la suppression d'un employé purge en cascade son planning et ses assignations ; ses créations survivent mais **anonymisées** (`created_by → NULL`).
-- **Minimisation** : `/api/employes/selector` ne renvoie que `{id, nom}` (pas d'email/salaire) et n'est accessible qu'aux manager/admin ; l'annuaire complet est admin-only ; la liste des employés n'est même pas téléchargée côté front pour un employé simple.
+- **Minimisation** : `/api/employes/selector` ne renvoie que `{id, nom}` (pas d'email, de salaire ni de rôle) — c'est ce qui permet de l'ouvrir à tout utilisateur authentifié pour l'assignation de post-its sans exposer de données sensibles ; l'annuaire complet reste admin-only.
 - **Factures** : le nom du client reste en texte brut **volontairement** — une facture est un instantané légal qui doit rester figé même si la fiche client change (obligation de conservation ≠ droit à l'effacement).
 - **IA locale** : Ollama tourne sur la machine → aucun prompt n'est envoyé à un service cloud.
 
@@ -485,7 +484,7 @@ Jamais commité (`.gitignore`) ; `.env.example` documente les variables. Le secr
 
 - **12 routers** Express, **~35 endpoints**, montés sous `/api/*`
 - **11 tables** SQLite, **5 migrations** idempotentes
-- **9 pages** React, **2 contexts** (Auth, Toast), **2 composants** partagés (Tabs, PostItWall)
+- **8 pages** React (le Dashboard intègre l'espace personnel), **2 contexts** (Auth, Toast), **2 composants** partagés (Tabs, PostItWall)
 - JWT : **24 h**, bcrypt cost **10**, rate-limit **100 req/15 min/IP**, upload max **50 MB**, todo max **280 caractères**
 - 3 rôles : `employe` < `manager` (son département) < `admin` (tout)
 - Comptes de démo (seed) : mot de passe commun `demo1234`, admin `admin@lexora.fr`
