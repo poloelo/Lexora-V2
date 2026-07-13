@@ -1,10 +1,12 @@
 /**
  * Equipe.jsx — Gestion interne de l'équipe
  *
- * Cette page regroupe trois sections liées à l'organisation interne :
+ * Cette page regroupe deux sections liées à l'organisation interne :
  *  - Employés  : répertoire de l'équipe (admin)
- *  - Planning  : horaires et projets assignés
  *  - Automations : tâches automatisées (admin)
+ *
+ * Le planning des employés se gère désormais directement dans le
+ * Calendrier (événements de type "planning" posés par les managers).
  *
  * Accès protégé par JWT (voir AuthContext). Le token est envoyé via
  * l'header Authorization: Bearer <token> sur les routes admin.
@@ -14,23 +16,6 @@ import { useEffect, useState } from 'react';
 import { useToast } from '../contexts/ToastContext.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import Tabs from '../components/Tabs.jsx';
-
-// ── Helper : calcul de la durée entre deux horaires ───────
-// Prend "09:00" et "17:30" → renvoie "8h30"
-function calculerDuree(debut, fin) {
-  if (!debut || !fin) return null;
-  const [h1, m1] = debut.split(':').map(Number);
-  const [h2, m2] = fin.split(':').map(Number);
-  const total = (h2 * 60 + m2) - (h1 * 60 + m1);
-  if (total <= 0) return null;
-  const h = Math.floor(total / 60);
-  const m = total % 60;
-  return m > 0 ? `${h}h${m}` : `${h}h`;
-}
-
-// Formate une date "2025-06-15" en "dim. 15 juin"
-const fmtDate = d =>
-  d ? new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) : '—';
 
 // ── Sous-composant : répertoire des employés ───────────────
 const FORM_EMPLOYE_VIDE = { nom: '', prenom: '', poste: '', email: '', password: '', departement_id: '', role: 'employe' };
@@ -180,142 +165,6 @@ function Employes() {
   );
 }
 
-// ── Sous-composant : planning des horaires ─────────────────
-const FORM_PLANNING_VIDE = { employe_id: '', date: '', heure_debut: '', heure_fin: '', projet: '' };
-
-function Planning() {
-  const [entries, setEntries]   = useState([]);
-  const [employes, setEmployes] = useState([]);
-  const [form, setForm]         = useState(FORM_PLANNING_VIDE);
-  const [loading, setLoading]   = useState(true);
-  const [saving, setSaving]     = useState(false);
-  const [search, setSearch]     = useState('');
-  const toast = useToast();
-  const { authHeaders } = useAuth();
-
-  const load = () =>
-    fetch('/api/planning', { headers: authHeaders })
-      .then(r => r.json())
-      .then(data => { setEntries(Array.isArray(data) ? data : []); setLoading(false); })
-      .catch(() => { toast('Impossible de charger le planning', 'error'); setLoading(false); });
-
-  useEffect(() => {
-    load();
-    // Annuaire minimal (id + nom) pour le sélecteur d'employé
-    fetch('/api/employes/selector', { headers: authHeaders })
-      .then(r => (r.ok ? r.json() : []))
-      .then(data => setEmployes(Array.isArray(data) ? data : []))
-      .catch(() => {});
-  }, []);
-
-  const handleChange = e => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
-
-  const handleSubmit = async e => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      await fetch('/api/planning', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ ...form, employe_id: Number(form.employe_id) }),
-      });
-      setForm(FORM_PLANNING_VIDE);
-      await load();
-      toast('Entrée ajoutée au planning');
-    } catch {
-      toast('Erreur lors de l\'ajout', 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async id => {
-    try {
-      await fetch(`/api/planning/${id}`, { method: 'DELETE', headers: authHeaders });
-      setEntries(prev => prev.filter(e => e.id !== id));
-      toast('Entrée supprimée');
-    } catch {
-      toast('Erreur lors de la suppression', 'error');
-    }
-  };
-
-  const filtered = entries.filter(e =>
-    e.employe_nom?.toLowerCase().includes(search.toLowerCase()) ||
-    e.projet?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  return (
-    <div>
-      <form onSubmit={handleSubmit}>
-        <select name="employe_id" value={form.employe_id} onChange={handleChange} required>
-          <option value="">Employé *</option>
-          {employes.map(emp => <option key={emp.id} value={emp.id}>{emp.nom}</option>)}
-        </select>
-        <input name="date"       type="date"              value={form.date}       onChange={handleChange} required />
-        <input name="heure_debut" type="time"             value={form.heure_debut} onChange={handleChange} required />
-        <input name="heure_fin"  type="time"              value={form.heure_fin}  onChange={handleChange} required />
-        <input name="projet"     placeholder="Projet"    value={form.projet}     onChange={handleChange} />
-        <button type="submit" disabled={saving}>
-          {saving ? <><span className="spinner" /> Ajout...</> : '+ Ajouter'}
-        </button>
-      </form>
-
-      <div className="page-toolbar">
-        <input className="search-input" placeholder="Rechercher employé ou projet..." value={search} onChange={e => setSearch(e.target.value)} />
-        <span className="record-count">{filtered.length} entrée{filtered.length !== 1 ? 's' : ''}</span>
-      </div>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Employé</th>
-            <th>Date</th>
-            <th>Début</th>
-            <th>Fin</th>
-            <th>Durée</th>
-            <th>Projet</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading && (
-            <tr className="loading-row">
-              <td colSpan="7"><span className="spinner dark" /> Chargement...</td>
-            </tr>
-          )}
-          {!loading && filtered.map(e => (
-            <tr key={e.id}>
-              {/* employe_nom vient de la jointure backend ; e.employe est le
-                  reliquat texte des bases partiellement migrées */}
-              <td style={{ fontWeight: 500 }}>{e.employe_nom || e.employe || '—'}</td>
-              <td style={{ color: '#555' }}>{fmtDate(e.date)}</td>
-              <td>{e.heure_debut}</td>
-              <td>{e.heure_fin}</td>
-              <td>
-                {calculerDuree(e.heure_debut, e.heure_fin) && (
-                  <span className="badge badge-in-progress">{calculerDuree(e.heure_debut, e.heure_fin)}</span>
-                )}
-              </td>
-              <td style={{ color: '#666' }}>{e.projet || <span style={{ color: '#ccc' }}>—</span>}</td>
-              <td>
-                <button className="danger" onClick={() => handleDelete(e.id)}>Supprimer</button>
-              </td>
-            </tr>
-          ))}
-          {!loading && filtered.length === 0 && (
-            <tr><td colSpan="7">
-              <div className="empty-state">
-                <div className="empty-state-icon">◫</div>
-                <p>{search ? 'Aucun résultat' : 'Aucune entrée dans le planning'}</p>
-              </div>
-            </td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 // ── Sous-composant : automations ───────────────────────────
 function Automations() {
   const [automations, setAutomations] = useState([]);
@@ -422,11 +271,10 @@ export default function Equipe() {
           Admin
         </span>
       </h1>
-      <p className="page-subtitle">Gestion interne — employés, planning et automations</p>
+      <p className="page-subtitle">Gestion interne — employés et automations</p>
 
-      <Tabs tabs={['Employés', 'Planning', 'Automations']}>
+      <Tabs tabs={['Employés', 'Automations']}>
         <Employes />
-        <Planning />
         <Automations />
       </Tabs>
     </div>
