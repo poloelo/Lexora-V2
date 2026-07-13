@@ -17,6 +17,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext.jsx';
 
 // ── Helper : formate une Date en "HH:mm" en français ─────────
 function fmtTime(date) {
@@ -24,6 +25,7 @@ function fmtTime(date) {
 }
 
 export default function Assistant() {
+  const { authHeaders } = useAuth();
   // Historique des messages (user + assistant)
   const [messages, setMessages] = useState([]);
   // Texte en cours de saisie dans le champ input
@@ -56,7 +58,7 @@ export default function Assistant() {
     try {
       const res = await fetch('/api/assistant', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body:    JSON.stringify({ prompt: userMsg.text }),
       });
       const data = await res.json();
@@ -93,7 +95,7 @@ export default function Assistant() {
               <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>◈</div>
               <p style={{ fontSize: '0.95rem' }}>Bonjour ! Comment puis-je vous aider ?</p>
               <p style={{ fontSize: '0.82rem', marginTop: 6 }}>
-                Posez une question sur vos tâches, factures ou votre activité.
+                Posez une question sur vos tâches, clients ou votre activité.
               </p>
             </div>
           )}

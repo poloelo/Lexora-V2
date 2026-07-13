@@ -1,5 +1,17 @@
+/**
+ * Dashboard.jsx — Page d'accueil unifiée
+ *
+ * Fusion de l'ancien "Mon espace" et du dashboard KPI : cette page sert
+ * désormais d'espace personnel pour tout utilisateur connecté (admin compris) :
+ *  - KPI animés (tâches) — visibles même déconnecté
+ *  - Mur de post-its (todos personnels) — connecté uniquement
+ *  - Mon planning : prochaine journée + tableau des créneaux — connecté uniquement
+ *  - Liste des tâches récentes
+ */
+
 import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext.jsx';
+import PostItWall from '../components/PostItWall.jsx';
 
 function useCountUp(target, duration = 900) {
   const [value, setValue] = useState(0);
@@ -26,13 +38,7 @@ function useCountUp(target, duration = 900) {
   return value;
 }
 
-const CARD_COLORS = [
-  '#7c6af7',
-  '#3b82f6',
-  '#f59e0b',
-  '#ef4444',
-  '#10b981',
-];
+const CARD_COLORS = ['#7c6af7', '#3b82f6'];
 
 function StatCard({ icon, value, label, color, suffix = '' }) {
   const animated = useCountUp(typeof value === 'number' ? value : 0);
@@ -60,49 +66,82 @@ const STATUT_TACHE = {
   done:        { label: 'Terminé',  cls: 'badge-done' },
 };
 
-const STATUT_FACTURE = {
-  'en attente': { label: 'En attente', cls: 'badge-pending' },
-  payee:        { label: 'Payée',      cls: 'badge-paid' },
-  annulee:      { label: 'Annulée',    cls: 'badge-cancelled' },
-};
+// Formate une date "2025-06-15" en "dimanche 15 juin"
+const fmtDate = d =>
+  d ? new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) : '—';
+
+// Depuis le calendrier unifié, les créneaux sont des événements avec des
+// dates ISO 8601 complètes ("2026-07-13T09:00:00") : on en extrait la
+// partie date et la partie heure par découpage de chaîne.
+const dateOf  = iso => iso?.slice(0, 10) ?? '';
+const heureOf = iso => iso?.slice(11, 16) || '—';
+
+// Durée entre deux dates ISO → "8h30", et "2j 4h" pour les événements longs
+function calculerDuree(debutIso, finIso) {
+  if (!debutIso || !finIso) return null;
+  const total = Math.round((new Date(finIso) - new Date(debutIso)) / 60000);
+  if (total <= 0) return null;
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (h >= 24) {
+    const j = Math.floor(h / 24);
+    const reste = h % 24;
+    return reste > 0 ? `${j}j ${reste}h` : `${j}j`;
+  }
+  return m > 0 ? `${h}h${m}` : `${h}h`;
+}
 
 export default function Dashboard() {
-  const { authHeaders } = useAuth();
-  const [taches, setTaches] = useState([]);
-  const [factures, setFactures] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { user, authHeaders, isAuthenticated } = useAuth();
+  const [taches, setTaches]     = useState([]);
+  const [planning, setPlanning] = useState([]);
+  const [filtre, setFiltre]     = useState('a_venir'); // 'a_venir' | 'tous'
+  const [loading, setLoading]   = useState(true);
 
   useEffect(() => {
     Promise.all([
-      // /api/tasks est protégé par JWT : sans connexion, les stats tombent à zéro
       fetch('/api/tasks', { headers: authHeaders })
         .then(r => (r.ok ? r.json() : [])).catch(() => []),
-      fetch('/api/factures').then(r => r.json()).catch(() => []),
-    ]).then(([t, f]) => {
+      fetch('/api/evenements', { headers: authHeaders })
+        .then(r => (r.ok ? r.json() : [])).catch(() => []),
+    ]).then(([t, ev]) => {
       setTaches(Array.isArray(t) ? t : []);
-      setFactures(Array.isArray(f) ? f : []);
+      // "Mon planning" = les événements qui me ciblent (planning posé par
+      // mon manager + mes événements personnels) — filtre par clé étrangère
+      const all = Array.isArray(ev) ? ev : [];
+      setPlanning(all.filter(e => e.employe_id === user?.id));
       setLoading(false);
     });
-  }, []);
+  }, [user?.id]);
 
-  const tachesEnCours    = taches.filter(t => t.status === 'in_progress').length;
-  const facturesImpayees = factures.filter(f => f.statut === 'en attente').length;
-  const totalFactures    = factures.reduce((s, f) => s + (f.montant || 0), 0);
+  const tachesEnCours = taches.filter(t => t.status === 'in_progress').length;
 
-  // L'API retourne déjà les éléments triés du plus récent au plus ancien
-  // (ORDER BY created_at DESC / ORDER BY id DESC).
-  // On prend simplement les 5 premiers — pas besoin de reverse().
-  const recentTaches   = taches.slice(0, 5);
-  const recentFactures = factures.slice(0, 5);
+  // L'API retourne déjà les tâches triées du plus récent au plus ancien
+  // (ORDER BY created_at DESC). On prend simplement les 5 premières —
+  // pas besoin de reverse().
+  const recentTaches = taches.slice(0, 5);
 
-  const today = new Date().toLocaleDateString('fr-FR', {
+  const todayStr = new Date().toLocaleDateString('fr-FR', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
 
+  const today = new Date().toISOString().slice(0, 10);
+  const affichage = filtre === 'a_venir'
+    ? planning.filter(e => dateOf(e.date_debut) >= today)
+    : planning;
+
+  // Prochaine journée de travail
+  const prochain = [...planning]
+    .filter(e => dateOf(e.date_debut) >= today)
+    .sort((a, b) => a.date_debut.localeCompare(b.date_debut))[0];
+
   return (
     <div className="page-enter">
-      <h1>Dashboard</h1>
-      <p className="page-subtitle">{today}</p>
+      <h1>{isAuthenticated ? <>Bonjour, {user?.prenom || user?.nom} 👋</> : 'Dashboard'}</h1>
+      <p className="page-subtitle">
+        {todayStr}
+        {isAuthenticated && user?.poste && <> · {user.poste}</>}
+      </p>
 
       {loading ? (
         <div className="stats-grid">
@@ -116,34 +155,115 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="stats-grid">
-          <StatCard icon="✓" value={taches.length}    label="Tâches totales"    color={CARD_COLORS[0]} />
-          <StatCard icon="◷" value={tachesEnCours}    label="En cours"          color={CARD_COLORS[1]} />
-          <StatCard icon="€" value={factures.length}  label="Factures"          color={CARD_COLORS[2]} />
-          <StatCard icon="⏳" value={facturesImpayees} label="En attente"        color={CARD_COLORS[3]} />
-          <StatCard icon="∑" value={Math.round(totalFactures)} label="Volume total (€)" color={CARD_COLORS[4]} />
+          <StatCard icon="✓" value={taches.length} label="Tâches totales" color={CARD_COLORS[0]} />
+          <StatCard icon="◷" value={tachesEnCours} label="En cours"       color={CARD_COLORS[1]} />
         </div>
       )}
 
-      <div className="dashboard-grid">
-        <div className="recent-section">
-          <div className="recent-header">✓ Tâches récentes</div>
-          {recentTaches.length === 0 ? (
-            <div className="empty-state"><p>Aucune tâche</p></div>
-          ) : recentTaches.map(t => {
-            const s = STATUT_TACHE[t.status] || { label: t.status, cls: 'badge-todo' };
-            return <RecentItem key={t.id} name={t.title} badge={s.label} badgeClass={s.cls} />;
-          })}
-        </div>
+      {/* ── Espace personnel (utilisateur connecté) ─────────── */}
+      {isAuthenticated && (
+        <>
+          {/* Mur de post-its (todos personnels) */}
+          <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '1.5rem 0 0.75rem' }}>📌 Mes post-its</h2>
+          <PostItWall />
 
-        <div className="recent-section">
-          <div className="recent-header">€ Factures récentes</div>
-          {recentFactures.length === 0 ? (
-            <div className="empty-state"><p>Aucune facture</p></div>
-          ) : recentFactures.map(f => {
-            const s = STATUT_FACTURE[f.statut] || { label: f.statut, cls: 'badge-pending' };
-            return <RecentItem key={f.id} name={`${f.client} — ${f.montant} €`} badge={s.label} badgeClass={s.cls} />;
-          })}
-        </div>
+          {/* Carte prochaine journée */}
+          {prochain && (
+            <div className="mon-espace-next">
+              <span className="mon-espace-next-label">Prochaine journée</span>
+              <strong>{fmtDate(dateOf(prochain.date_debut))}</strong>
+              <span>{heureOf(prochain.date_debut)} → {heureOf(prochain.date_fin)}</span>
+              <span className="badge badge-in-progress">{prochain.titre}</span>
+              {calculerDuree(prochain.date_debut, prochain.date_fin) && (
+                <span style={{ color: '#888', fontSize: '0.85rem' }}>
+                  {calculerDuree(prochain.date_debut, prochain.date_fin)} de travail
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Tableau planning personnel */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', margin: '1.5rem 0 0.75rem' }}>
+            <h2 style={{ fontSize: '1rem', fontWeight: 600 }}>Mon planning</h2>
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
+              <button
+                className={filtre === 'a_venir' ? 'btn-filter active' : 'btn-filter'}
+                onClick={() => setFiltre('a_venir')}
+              >À venir</button>
+              <button
+                className={filtre === 'tous' ? 'btn-filter active' : 'btn-filter'}
+                onClick={() => setFiltre('tous')}
+              >Tout</button>
+            </div>
+            <span className="record-count">{affichage.length} créneau{affichage.length !== 1 ? 'x' : ''}</span>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Début</th>
+                <th>Fin</th>
+                <th>Durée</th>
+                <th>Événement</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr className="loading-row">
+                  <td colSpan="5"><span className="spinner dark" /> Chargement...</td>
+                </tr>
+              )}
+              {!loading && affichage.length === 0 && (
+                <tr><td colSpan="5">
+                  <div className="empty-state">
+                    <div className="empty-state-icon">◫</div>
+                    <p>{filtre === 'a_venir' ? 'Aucun créneau à venir' : 'Aucun créneau enregistré'}</p>
+                  </div>
+                </td></tr>
+              )}
+              {!loading && [...affichage]
+                .sort((a, b) => a.date_debut.localeCompare(b.date_debut))
+                .map(e => {
+                  const jour = dateOf(e.date_debut);
+                  return (
+                    <tr key={e.id} style={jour === today ? { background: '#f0eeff' } : {}}>
+                      <td style={{ fontWeight: jour === today ? 600 : 400 }}>
+                        {fmtDate(jour)}
+                        {jour === today && <span className="badge badge-in-progress" style={{ marginLeft: 6 }}>Aujourd'hui</span>}
+                      </td>
+                      <td>{heureOf(e.date_debut)}</td>
+                      <td>{heureOf(e.date_fin)}</td>
+                      <td>
+                        {calculerDuree(e.date_debut, e.date_fin) && (
+                          <span className="badge">{calculerDuree(e.date_debut, e.date_fin)}</span>
+                        )}
+                      </td>
+                      <td style={{ color: '#666' }}>
+                        {/* Pastille de la couleur choisie dans le calendrier */}
+                        <span style={{
+                          display: 'inline-block', width: 9, height: 9, borderRadius: '50%',
+                          background: e.couleur || '#7c6af7', marginRight: 7,
+                        }} />
+                        {e.titre}
+                      </td>
+                    </tr>
+                  );
+                })
+              }
+            </tbody>
+          </table>
+        </>
+      )}
+
+      <div className="recent-section">
+        <div className="recent-header">✓ Tâches récentes</div>
+        {recentTaches.length === 0 ? (
+          <div className="empty-state"><p>Aucune tâche</p></div>
+        ) : recentTaches.map(t => {
+          const s = STATUT_TACHE[t.status] || { label: t.status, cls: 'badge-todo' };
+          return <RecentItem key={t.id} name={t.title} badge={s.label} badgeClass={s.cls} />;
+        })}
       </div>
     </div>
   );

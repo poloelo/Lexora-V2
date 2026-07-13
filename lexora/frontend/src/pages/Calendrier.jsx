@@ -1,15 +1,21 @@
 /**
- * Calendrier.jsx — Vue calendrier interactif
+ * Calendrier.jsx — Vue calendrier interactif (calendrier unifié)
  *
  * Utilise react-big-calendar avec date-fns comme moteur de dates.
  *
+ * Depuis la fusion planning/événements, une seule source de données :
+ * /api/evenements. Le backend applique les règles de visibilité (général /
+ * planning de département / personnel) — le front affiche ce qu'il reçoit.
+ *
  * Fonctionnalités :
  *  - Vues mois / semaine / jour (boutons en haut à droite)
- *  - Clic sur un créneau vide → ouvre un modal pour créer un événement
- *  - Clic sur un événement existant → ouvre un modal de détail + suppression
- *  - Les entrées de planning (table `planning`) apparaissent automatiquement
- *    dans le calendrier, converties en événements de type "planning"
- *  - Code couleur par type d'événement (voir TYPE_COULEURS)
+ *  - Clic sur un créneau vide → modal de création :
+ *      · tout le monde : événement général, ou personnel (case à cocher),
+ *        avec choix de la couleur
+ *      · manager/admin : type "Planning" en plus → cible un employé,
+ *        couleur verte imposée
+ *  - Clic sur un événement existant → modal de détail + suppression
+ *    (bouton affiché selon les droits ; le backend reste l'autorité)
  *
  * CSS de react-big-calendar : importé ici, surchargé dans index.css (section .rbc-*)
  */
@@ -22,6 +28,7 @@ import { fr } from 'date-fns/locale';
 
 import { useEffect, useState } from 'react';
 import { useToast } from '../contexts/ToastContext.jsx';
+import { useAuth } from '../contexts/AuthContext.jsx';
 
 // ── Configuration du localizer en français ────────────────
 // Le localizer indique à react-big-calendar comment formater
@@ -51,9 +58,9 @@ const MESSAGES_FR = {
   showMore:         total => `+ ${total} de plus`,
 };
 
-// ── Couleurs par type d'événement ────────────────────────
-// Chaque type a une couleur de fond et une couleur de texte.
-// Ces couleurs s'appliquent via eventPropGetter sur le calendrier.
+// ── Couleurs par défaut par type d'événement ──────────────
+// Servent de légende et de couleur de repli ; la couleur réelle de chaque
+// événement vient de la base (choisie par l'utilisateur à la création).
 const TYPE_COULEURS = {
   rdv:       { bg: '#7c6af7', text: '#fff', label: 'Rendez-vous' },
   tache:     { bg: '#3b82f6', text: '#fff', label: 'Tâche'       },
@@ -62,9 +69,15 @@ const TYPE_COULEURS = {
   planning:  { bg: '#10b981', text: '#fff', label: 'Planning'    },
 };
 
+// Palette proposée pour les événements non-planning.
+// Le vert #10b981 en est volontairement absent : il est réservé au planning
+// pour que celui-ci reste identifiable d'un coup d'œil.
+const COULEURS = ['#7c6af7', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+
 // ── Valeur vide du formulaire de création ─────────────────
 const FORM_VIDE = {
-  titre: '', description: '', date_debut: '', date_fin: '', type: 'rdv',
+  titre: '', description: '', date_debut: '', date_fin: '',
+  type: 'rdv', couleur: COULEURS[0], employe_id: '', personnel: false,
 };
 
 // ── Helper : convertit une Date JS en valeur datetime-local ──
@@ -86,11 +99,16 @@ function Modal({ onClose, children }) {
 
 // ── Page principale ────────────────────────────────────────
 export default function Calendrier() {
-  // Tous les événements affichés dans le calendrier
-  const [events, setEvents]       = useState([]);
-  const [loading, setLoading]     = useState(true);
+  const { user, authHeaders } = useAuth();
+  const toast = useToast();
 
-  // Modal de création : null = fermé, true = ouvert
+  // Tous les événements visibles par l'utilisateur
+  const [events, setEvents]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  // Annuaire minimal pour le sélecteur "planning de qui ?" (manager/admin)
+  const [employes, setEmployes] = useState([]);
+
+  // Modal de création : false = fermé, true = ouvert
   const [showCreate, setShowCreate] = useState(false);
   // Modal de détail : null = fermé, objet événement = ouvert
   const [detail, setDetail]         = useState(null);
@@ -98,49 +116,35 @@ export default function Calendrier() {
   const [form, setForm]     = useState(FORM_VIDE);
   const [saving, setSaving] = useState(false);
 
-  const toast = useToast();
+  // Manager/admin : peuvent poser du planning sur un employé
+  const canPlan = user?.role === 'manager' || user?.role === 'admin';
 
   // ── Chargement des données ──────────────────────────────
-  // On fusionne deux sources :
-  //  1. /api/evenements  → événements créés dans le calendrier
-  //  2. /api/planning    → entrées de planning (employés) converties en événements
+  // Une seule source : le backend renvoie déjà les événements filtrés
+  // selon la visibilité (général / planning du département / personnel).
   const loadEvents = async () => {
     try {
-      const [evtsData, planData] = await Promise.all([
-        fetch('/api/evenements').then(r => r.json()).catch(() => []),
-        fetch('/api/planning').then(r => r.json()).catch(() => []),
-      ]);
+      const data = await fetch('/api/evenements', { headers: authHeaders })
+        .then(r => (r.ok ? r.json() : []));
 
-      // Conversion des événements (format API → format react-big-calendar)
-      // react-big-calendar attend { title, start: Date, end: Date }
-      const evts = (Array.isArray(evtsData) ? evtsData : []).map(e => ({
-        id:          e.id,
-        title:       e.titre,
-        start:       new Date(e.date_debut),
-        end:         new Date(e.date_fin ?? e.date_debut),
-        type:        e.type ?? 'evenement',
-        description: e.description,
-        source:      'evenement',   // Pour distinguer les deux sources au clic
+      // Conversion au format react-big-calendar : { title, start: Date, end: Date }
+      const evts = (Array.isArray(data) ? data : []).map(e => ({
+        id:             e.id,
+        // Le planning affiche le nom de l'employé concerné en préfixe
+        title:          e.type === 'planning' && e.employe_nom
+                          ? `${e.employe_nom} — ${e.titre}`
+                          : e.titre,
+        start:          new Date(e.date_debut),
+        end:            new Date(e.date_fin ?? e.date_debut),
+        type:           e.type ?? 'evenement',
+        couleur:        e.couleur,
+        description:    e.description,
+        employe_id:     e.employe_id,
+        employe_nom:    e.employe_nom,
+        created_by_id:  e.created_by_id,
+        created_by_nom: e.created_by_nom,
       }));
-
-      // Conversion des entrées de planning
-      // La table planning stocke date + heure séparément : on les concatène
-      // Le nom vient de la jointure backend (employe_nom) ; p.employe est le
-      // reliquat texte des bases partiellement migrées (voir db.js)
-      const plan = (Array.isArray(planData) ? planData : []).map(p => {
-        const nom = p.employe_nom || p.employe || 'Employé';
-        return {
-          id:          `planning-${p.id}`,  // Préfixe pour éviter les collisions d'ID
-          title:       `${nom}${p.projet ? ' — ' + p.projet : ''}`,
-          start:       new Date(`${p.date}T${p.heure_debut}`),
-          end:         new Date(`${p.date}T${p.heure_fin}`),
-          type:        'planning',
-          description: `Employé : ${nom}${p.projet ? '\nProjet : ' + p.projet : ''}`,
-          source:      'planning',
-        };
-      });
-
-      setEvents([...evts, ...plan]);
+      setEvents(evts);
     } catch {
       toast('Impossible de charger les événements', 'error');
     } finally {
@@ -148,7 +152,15 @@ export default function Calendrier() {
     }
   };
 
-  useEffect(() => { loadEvents(); }, []);
+  useEffect(() => {
+    loadEvents();
+    if (canPlan) {
+      fetch('/api/employes/selector', { headers: authHeaders })
+        .then(r => (r.ok ? r.json() : []))
+        .then(data => setEmployes(Array.isArray(data) ? data : []))
+        .catch(() => {});
+    }
+  }, []);
 
   // ── Clic sur un créneau vide → ouvre le formulaire ──────
   // react-big-calendar passe { start, end } comme objets Date
@@ -174,56 +186,77 @@ export default function Calendrier() {
     e.preventDefault();
     setSaving(true);
     try {
-      await fetch('/api/evenements', {
+      const isPlanning = form.type === 'planning';
+      const body = {
+        titre:       form.titre,
+        description: form.description || null,
+        date_debut:  form.date_debut,
+        date_fin:    form.date_fin || form.date_debut,
+        type:        form.type,
+      };
+      if (isPlanning) {
+        // Le backend impose la couleur verte : inutile de l'envoyer
+        body.employe_id = Number(form.employe_id);
+      } else {
+        body.couleur = form.couleur;
+        // Case "personnel" cochée → l'événement me cible (visible par moi + mon manager)
+        if (form.personnel) body.employe_id = user.id;
+      }
+
+      const res = await fetch('/api/evenements', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          titre:       form.titre,
-          description: form.description || null,
-          date_debut:  form.date_debut,
-          date_fin:    form.date_fin || form.date_debut,
-          type:        form.type,
-        }),
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body:    JSON.stringify(body),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
       setShowCreate(false);
       setForm(FORM_VIDE);
       await loadEvents();
       toast('Événement créé');
-    } catch {
-      toast('Erreur lors de la création', 'error');
+    } catch (err) {
+      toast(err.message || 'Erreur lors de la création', 'error');
     } finally {
       setSaving(false);
     }
   };
 
+  // ── Droits de suppression (miroir du backend, pour l'affichage) ──
+  // Le backend reste l'autorité : ici on ne fait que cacher le bouton.
+  const canDelete = event => {
+    if (user?.role === 'admin') return true;
+    if (event.type === 'planning') return user?.role === 'manager';
+    return event.created_by_id === user?.id;
+  };
+
   // ── Suppression d'un événement ───────────────────────────
   const handleDelete = async event => {
-    // Les événements issus du planning se gèrent dans la page Équipe
-    if (event.source === 'planning') {
-      toast('Les entrées de planning se suppriment dans la page Équipe', 'info');
-      setDetail(null);
-      return;
-    }
     try {
-      await fetch(`/api/evenements/${event.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/evenements/${event.id}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
       setDetail(null);
       // Retrait immédiat de l'état local, plus réactif qu'un rechargement complet
       setEvents(prev => prev.filter(e => e.id !== event.id));
       toast('Événement supprimé');
-    } catch {
-      toast('Erreur lors de la suppression', 'error');
+    } catch (err) {
+      toast(err.message || 'Erreur lors de la suppression', 'error');
     }
   };
 
-  // ── Couleur dynamique par type ───────────────────────────
-  // eventPropGetter est une prop de Calendar qui permet de modifier
-  // le style CSS de chaque événement individuellement.
+  // ── Couleur dynamique par événement ──────────────────────
+  // La couleur vient de la base (choisie à la création) ; les couleurs
+  // par type ne servent que de repli pour les anciens événements.
   const eventPropGetter = event => {
-    const couleurs = TYPE_COULEURS[event.type] ?? TYPE_COULEURS.evenement;
+    const bg = event.couleur ?? TYPE_COULEURS[event.type]?.bg ?? TYPE_COULEURS.evenement.bg;
     return {
       style: {
-        backgroundColor: couleurs.bg,
-        color:           couleurs.text,
+        backgroundColor: bg,
+        color:           '#fff',
         border:          'none',
         borderRadius:    '5px',
         fontSize:        '0.8rem',
@@ -239,7 +272,10 @@ export default function Calendrier() {
       <div className="cal-header">
         <div>
           <h1>Calendrier</h1>
-          <p className="page-subtitle">Cliquez sur un créneau pour créer un événement</p>
+          <p className="page-subtitle">
+            Cliquez sur un créneau pour créer un événement
+            {canPlan && ' — ou un créneau de planning pour votre équipe'}
+          </p>
         </div>
         <div className="cal-legend">
           {Object.entries(TYPE_COULEURS).map(([type, { bg, label }]) => (
@@ -311,8 +347,60 @@ export default function Calendrier() {
                   <option value="tache">Tâche</option>
                   <option value="rappel">Rappel</option>
                   <option value="evenement">Événement</option>
+                  {/* Seuls manager et admin posent du planning */}
+                  {canPlan && <option value="planning">Planning (équipe)</option>}
                 </select>
               </div>
+
+              {form.type === 'planning' ? (
+                /* Planning : on cible un employé, couleur verte imposée */
+                <div className="form-group">
+                  <label>Pour l'employé *</label>
+                  <select
+                    value={form.employe_id}
+                    onChange={e => setForm(p => ({ ...p, employe_id: e.target.value }))}
+                    required
+                  >
+                    <option value="">— Choisir —</option>
+                    {employes.map(emp => <option key={emp.id} value={emp.id}>{emp.nom}</option>)}
+                  </select>
+                  <p style={{ fontSize: '0.78rem', color: '#aaa', marginTop: 4 }}>
+                    Visible par tout le département de l'employé — couleur verte imposée.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* Choix de la couleur (mêmes pastilles que les post-its) */}
+                  <div className="form-group">
+                    <label>Couleur</label>
+                    <div className="postit-colors">
+                      {COULEURS.map(c => (
+                        <button
+                          key={c}
+                          type="button"
+                          className={`postit-color-swatch${form.couleur === c ? ' selected' : ''}`}
+                          style={{ background: c }}
+                          onClick={() => setForm(p => ({ ...p, couleur: c }))}
+                          title="Couleur de l'événement"
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Général (visible par tous) ou personnel (moi + mon manager) */}
+                  <div className="form-group">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={form.personnel}
+                        onChange={e => setForm(p => ({ ...p, personnel: e.target.checked }))}
+                        style={{ width: 'auto' }}
+                      />
+                      Événement personnel (visible par vous et votre manager)
+                    </label>
+                  </div>
+                </>
+              )}
 
               {/* Les deux champs date sont sur la même ligne */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -369,7 +457,7 @@ export default function Calendrier() {
               <span
                 style={{
                   width: 12, height: 12, borderRadius: '50%',
-                  background: TYPE_COULEURS[detail.type]?.bg ?? '#7c6af7',
+                  background: detail.couleur ?? TYPE_COULEURS[detail.type]?.bg ?? '#7c6af7',
                   flexShrink: 0,
                 }}
               />
@@ -392,23 +480,32 @@ export default function Calendrier() {
               <span>{detail.end.toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short' })}</span>
             </div>
 
+            {detail.employe_nom && (
+              <div className="modal-detail-row">
+                <span className="modal-detail-label">Pour</span>
+                <span>{detail.employe_nom}</span>
+              </div>
+            )}
+            {detail.created_by_nom && (
+              <div className="modal-detail-row">
+                <span className="modal-detail-label">Créé par</span>
+                <span>{detail.created_by_nom}</span>
+              </div>
+            )}
+
             {detail.description && (
               <div className="modal-detail-row" style={{ alignItems: 'flex-start' }}>
                 <span className="modal-detail-label">Notes</span>
                 <span style={{ whiteSpace: 'pre-line', color: '#555' }}>{detail.description}</span>
               </div>
             )}
-
-            {detail.source === 'planning' && (
-              <p style={{ fontSize: '0.82rem', color: '#aaa', marginTop: 4 }}>
-                Issu du planning — à modifier dans la page Équipe.
-              </p>
-            )}
           </div>
 
           <div className="modal-footer">
             <button type="button" className="secondary" onClick={() => setDetail(null)}>Fermer</button>
-            <button className="danger" onClick={() => handleDelete(detail)}>Supprimer</button>
+            {canDelete(detail) && (
+              <button className="danger" onClick={() => handleDelete(detail)}>Supprimer</button>
+            )}
           </div>
         </Modal>
       )}

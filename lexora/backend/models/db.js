@@ -69,8 +69,9 @@ const TODO_ASSIGNEES_SCHEMA = `
 //    la vie du todo et de l'employé (RGPD : supprimer un employé purge ses assignations).
 //  - employes.departement_id → SET NULL : supprimer un département ne doit pas
 //    supprimer les employés, ils deviennent simplement "sans département".
-//  - planning.employe_id  → CASCADE  : un créneau sans employé n'a pas de sens,
-//    et la suppression d'un employé purge ses données de planning (RGPD).
+//  - evenements.employe_id → CASCADE : le planning et les événements personnels
+//    d'un employé parti sont purgés (RGPD) ; created_by_id → SET NULL :
+//    l'événement général survit à son créateur, anonymisé.
 db.exec(`
   -- ── Départements ───────────────────────────────────────────
   -- Référentiel des départements de l'entreprise. Les employés et les
@@ -122,35 +123,12 @@ db.exec(`
   -- Un todo peut viser plusieurs employés (table de jointure N-N).
   ${TODO_ASSIGNEES_SCHEMA}
 
-  -- ── Factures ───────────────────────────────────────────────
-  -- Statuts valides : 'en attente' | 'payee' | 'annulee'
-  -- montant stocké en REAL (virgule flottante) — suffisant pour des montants en €
-  -- NB : le champ client reste volontairement en texte brut : une facture est un
-  -- instantané légal, le libellé du client au moment de l'émission doit rester
-  -- figé même si la fiche client est modifiée ou supprimée par la suite.
-  CREATE TABLE IF NOT EXISTS factures (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    client         TEXT NOT NULL,
-    montant        REAL NOT NULL,
-    statut         TEXT DEFAULT 'en attente',
-    date_emission  TEXT,            -- Format : "YYYY-MM-DD"
-    date_echeance  TEXT             -- Format : "YYYY-MM-DD"
-  );
-
-  -- ── Planning des employés ──────────────────────────────────
-  -- Représente un créneau de travail : qui, quand, de quelle heure à quelle heure.
-  -- Ces entrées apparaissent aussi dans le calendrier (vue verte "Planning").
-  CREATE TABLE IF NOT EXISTS planning (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    employe_id  INTEGER REFERENCES employes(id) ON DELETE CASCADE,
-    date        TEXT NOT NULL,       -- Format : "YYYY-MM-DD"
-    heure_debut TEXT NOT NULL,       -- Format : "HH:mm"
-    heure_fin   TEXT NOT NULL,       -- Format : "HH:mm"
-    projet      TEXT                 -- Optionnel : nom du projet associé
-  );
-
   -- ── Clients ────────────────────────────────────────────────
   -- Gère deux types : 'particulier' (nom + prénom) et 'entreprise' (raison sociale + SIRET).
+  -- dossier_id : chaque client a un sous-dossier dédié dans le coffre-fort
+  -- (créé automatiquement à la création du client, voir routes/clients.js),
+  -- rangé sous le dossier racine "Clients". SET NULL si le dossier est
+  -- supprimé indépendamment : le client survit, simplement sans dossier lié.
   CREATE TABLE IF NOT EXISTS clients (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     type_client    TEXT DEFAULT 'particulier',  -- 'particulier' | 'entreprise'
@@ -165,41 +143,34 @@ db.exec(`
     siret          TEXT,
     tva            TEXT,
     contact_nom    TEXT,             -- Nom du contact chez l'entreprise
+    dossier_id     INTEGER REFERENCES dossiers(id) ON DELETE SET NULL,
     created_at     TEXT DEFAULT (datetime('now'))
   );
 
-  -- ── Automatisations ────────────────────────────────────────
-  -- Règles d'automatisation configurables (actuellement descriptives,
-  -- non exécutées automatiquement — à implémenter selon les besoins).
-  -- actif stocké en INTEGER : 1 = actif, 0 = inactif (booléen SQLite)
-  CREATE TABLE IF NOT EXISTS automations (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    nom         TEXT NOT NULL,
-    description TEXT,
-    type        TEXT,
-    frequence   TEXT,
-    action      TEXT NOT NULL,
-    actif       INTEGER DEFAULT 1,  -- 1 = actif, 0 = inactif
-    created_at  TEXT DEFAULT (datetime('now'))
-  );
-
-  -- ── Événements du calendrier ───────────────────────────────
+  -- ── Événements du calendrier (calendrier unifié) ───────────
+  -- Depuis la fusion planning/événements, cette table porte trois usages :
+  --  1. Événement général  (employe_id NULL)           : visible par tous
+  --  2. Planning           (type 'planning' + employe_id) : posé par le manager
+  --     du département de l'employé ciblé, visible par tout son département,
+  --     toujours vert (#10b981)
+  --  3. Événement personnel (employe_id = soi-même)    : visible par son
+  --     créateur et par le manager de son département
   -- Types valides : 'rdv' | 'tache' | 'rappel' | 'evenement' | 'planning'
-  -- couleur : code hexadécimal CSS (ex : '#7c6af7')
+  -- couleur : code hexadécimal CSS (ex : '#7c6af7'), choisie par l'utilisateur
   -- Les dates sont stockées en ISO 8601 : "2026-05-20T09:00:00"
-  -- NB : created_by reste en texte brut (champ purement informatif, la
-  -- correspondance par nom vers employes serait trop peu fiable pour migrer
-  -- sans risque de corruption). Candidat à une future migration vers une FK.
+  -- ON DELETE : employe_id CASCADE (RGPD : le planning d'un employé parti est
+  -- purgé) ; created_by_id SET NULL (l'événement survit, anonymisé).
   CREATE TABLE IF NOT EXISTS evenements (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    titre       TEXT NOT NULL,
-    description TEXT,
-    date_debut  TEXT NOT NULL,       -- ISO 8601 : "YYYY-MM-DDTHH:mm:ss"
-    date_fin    TEXT,                -- Si null en DB, le backend défaut à date_debut
-    type        TEXT DEFAULT 'evenement',
-    couleur     TEXT DEFAULT '#7c6af7',
-    created_by  TEXT,
-    created_at  TEXT DEFAULT (datetime('now'))
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    titre         TEXT NOT NULL,
+    description   TEXT,
+    date_debut    TEXT NOT NULL,     -- ISO 8601 : "YYYY-MM-DDTHH:mm:ss"
+    date_fin      TEXT,              -- Si null en DB, le backend défaut à date_debut
+    type          TEXT DEFAULT 'evenement',
+    couleur       TEXT DEFAULT '#7c6af7',
+    employe_id    INTEGER REFERENCES employes(id) ON DELETE CASCADE,
+    created_by_id INTEGER REFERENCES employes(id) ON DELETE SET NULL,
+    created_at    TEXT DEFAULT (datetime('now'))
   );
 
   -- ── Coffre-fort : dossiers ─────────────────────────────────
@@ -339,6 +310,9 @@ if (tableExists('taches')) {
 // "Nom Prénom" ou "Nom" seul). Par prudence, la colonne texte n'est
 // supprimée que si TOUTES les lignes ont pu être appariées : sinon elle est
 // conservée et la migration se retentera au prochain démarrage (idempotent).
+// NB : conservée bien que la table planning soit fusionnée dans evenements
+// (migration 7) — sur une très vieille base, elle s'exécute AVANT la fusion
+// pour que les créneaux soient migrés avec leur clé étrangère.
 if (tableColumns('planning').includes('employe')) {
   const dropped = db.transaction(() => {
     if (!tableColumns('planning').includes('employe_id')) {
@@ -365,6 +339,77 @@ if (tableColumns('planning').includes('employe')) {
     return false;
   })();
   if (dropped) console.log('✅ Migration : planning.employe → employe_id (FK)');
+}
+
+// ── Migration 6 : evenements — colonnes employe_id / created_by_id ──
+// Prépare le calendrier unifié : l'événement peut cibler un employé
+// (planning, événement personnel) et connaît son créateur par FK.
+// L'ancienne colonne created_by (texte libre, purement informative) est
+// supprimée : la correspondance par nom serait trop peu fiable pour être
+// migrée sans risque, et le champ n'était exploité nulle part.
+{
+  const cols = tableColumns('evenements');
+  if (!cols.includes('employe_id')) {
+    db.exec('ALTER TABLE evenements ADD COLUMN employe_id INTEGER REFERENCES employes(id) ON DELETE CASCADE');
+    db.exec('ALTER TABLE evenements ADD COLUMN created_by_id INTEGER REFERENCES employes(id) ON DELETE SET NULL');
+    console.log('✅ Migration : evenements.employe_id / created_by_id (FK)');
+  }
+  if (cols.includes('created_by')) {
+    db.exec('ALTER TABLE evenements DROP COLUMN created_by');
+    console.log('✅ Migration : evenements.created_by (texte) supprimé');
+  }
+}
+
+// ── Migration 7 : fusion planning → evenements ──
+// Chaque créneau devient un événement de type 'planning' (vert) ciblant
+// l'employé : date + heures séparées sont concaténées en ISO 8601.
+// Les éventuels créneaux sans employé (vieilles bases partiellement
+// appariées) sont conservés en événements généraux plutôt que perdus.
+if (tableExists('planning')) {
+  db.transaction(() => {
+    db.prepare(`
+      INSERT INTO evenements (titre, date_debut, date_fin, type, couleur, employe_id)
+      SELECT
+        COALESCE(NULLIF(TRIM(projet), ''), 'Créneau de travail'),
+        date || 'T' || heure_debut,
+        date || 'T' || heure_fin,
+        'planning',
+        '#10b981',
+        employe_id
+      FROM planning
+    `).run();
+    db.exec('DROP TABLE planning');
+  })();
+  console.log('✅ Migration : planning → evenements (calendrier unifié)');
+}
+
+// ── Migration 8 : anciennes tables factures / automations (retirées) ──
+// Ces deux fonctionnalités ont été retirées du périmètre de l'application ;
+// on nettoie leurs tables si elles existent encore sur une base ancienne.
+for (const table of ['factures', 'automations']) {
+  if (tableExists(table)) {
+    db.exec(`DROP TABLE ${table}`);
+    console.log(`✅ Migration : table ${table} supprimée (fonctionnalité retirée)`);
+  }
+}
+
+// ── Migration 9 : clients.dossier_id + dossier racine "Clients" ──
+// Chaque client a désormais un sous-dossier dédié dans le coffre-fort,
+// rangé sous un dossier racine fixe nommé "Clients" (pour ne pas polluer
+// la racine de l'arborescence). Ce dossier racine est créé une seule fois,
+// au démarrage, avant que routes/clients.js n'en ait besoin pour y créer
+// les sous-dossiers de chaque client.
+if (!tableColumns('clients').includes('dossier_id')) {
+  db.exec('ALTER TABLE clients ADD COLUMN dossier_id INTEGER REFERENCES dossiers(id) ON DELETE SET NULL');
+  console.log('✅ Migration : clients.dossier_id (FK)');
+}
+const clientsRootFolder = db.prepare(
+  "SELECT id FROM dossiers WHERE nom = 'Clients' AND parent_id IS NULL"
+).get();
+if (!clientsRootFolder) {
+  db.prepare("INSERT INTO dossiers (nom, description, parent_id) VALUES ('Clients', ?, NULL)")
+    .run('Dossier racine automatique : contient un sous-dossier par client.');
+  console.log('✅ Dossier racine "Clients" créé');
 }
 
 // Seed : créer un compte admin depuis les variables d'env s'il n'en existe aucun
