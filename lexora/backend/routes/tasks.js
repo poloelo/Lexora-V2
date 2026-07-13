@@ -34,6 +34,11 @@ const TASK_SELECT = `
 
 const getTask = id => db.prepare(`${TASK_SELECT} WHERE t.id = ?`).get(id);
 
+// Les tâches d'un département, de la plus récente à la plus ancienne.
+// Exportée pour la vue dashboard consultée par un manager (routes/dashboard.js).
+export const getTasksOfDepartment = depId =>
+  db.prepare(`${TASK_SELECT} WHERE t.department_id = ? ORDER BY t.created_at DESC`).all(depId);
+
 // Vérifie que l'utilisateur peut administrer (créer/modifier/supprimer)
 // une tâche du département visé : admin partout, manager chez lui.
 function canManage(user, departmentId) {

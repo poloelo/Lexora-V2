@@ -1,16 +1,22 @@
 /**
- * Taches.jsx — Tâches de département (vue kanban)
+ * TaskBoard.jsx — Kanban des tâches de département (composant réutilisable)
  *
- * Trois colonnes (À faire / En cours / Terminé) alimentées par /api/tasks.
- * Le backend filtre déjà par département : un employé ne voit que les tâches
- * de son département, un admin voit tout (avec un sélecteur de département).
+ * Anciennement la page Taches.jsx : le tableau vit désormais dans le
+ * Dashboard (hub unique). La logique métier est inchangée :
+ *  - trois colonnes (À faire / En cours / Terminé) alimentées par /api/tasks
+ *  - le backend filtre par département (un admin voit tout, avec sélecteur)
+ *  - changement de statut : drag & drop natif HTML5 + menu déroulant de
+ *    secours, tous deux optimistes (l'interface bouge immédiatement,
+ *    rollback si l'API refuse)
+ *  - création/suppression réservées aux rôles manager (son département)
+ *    et admin — le backend fait autorité, l'interface ne fait que cacher
  *
- * Changement de statut : drag & drop natif HTML5 entre les colonnes, avec
- * un menu déroulant de secours sur chaque carte. Les deux sont optimistes :
- * l'interface bouge immédiatement, et revient en arrière si l'API échoue.
- *
- * Création/suppression : réservées aux rôles manager (son département) et
- * admin — le backend fait autorité, l'interface ne fait que cacher les boutons.
+ * Deux modes :
+ *  - interactif (défaut) : le composant charge ses données et expose
+ *    toutes les actions — c'est le dashboard personnel
+ *  - lecture seule (readOnly + tasks fournis en props) : consultation du
+ *    dashboard d'un employé par son manager — aucune action possible,
+ *    les données viennent de /api/dashboard/:userId (voir Equipe.jsx)
  */
 
 import { useEffect, useState } from 'react';
@@ -34,25 +40,26 @@ const FORM_VIDE = { title: '', description: '', department_id: '', priority: 'me
 const fmtDue = d =>
   d ? new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : null;
 
-// ── Carte de tâche (draggable) ─────────────────────────────
-function TaskCard({ task, canManage, isAdminView, onStatusChange, onDelete }) {
+// ── Carte de tâche (draggable en mode interactif) ──────────
+function TaskCard({ task, canManage, isAdminView, readOnly, onStatusChange, onDelete }) {
   const prio = PRIORITES[task.priority] ?? PRIORITES.medium;
   const enRetard = task.due_date && task.status !== 'done' && task.due_date < new Date().toISOString().slice(0, 10);
+  const statut = COLONNES.find(c => c.status === task.status);
 
   return (
     <div
       className="kanban-card"
-      draggable
-      onDragStart={e => {
+      draggable={!readOnly}
+      onDragStart={readOnly ? undefined : e => {
         e.dataTransfer.setData('text/task-id', String(task.id));
         e.dataTransfer.effectAllowed = 'move';
         e.currentTarget.classList.add('dragging');
       }}
-      onDragEnd={e => e.currentTarget.classList.remove('dragging')}
+      onDragEnd={readOnly ? undefined : e => e.currentTarget.classList.remove('dragging')}
     >
       <div className="kanban-card-top">
         <span className={`badge ${prio.cls}`}>{prio.label}</span>
-        {canManage && (
+        {!readOnly && canManage && (
           <button className="kanban-card-delete" title="Supprimer" onClick={() => onDelete(task)}>✕</button>
         )}
       </div>
@@ -64,36 +71,49 @@ function TaskCard({ task, canManage, isAdminView, onStatusChange, onDelete }) {
           <span className={`kanban-card-due${enRetard ? ' late' : ''}`}>⏱ {fmtDue(task.due_date)}</span>
         )}
       </div>
-      {/* Menu déroulant de secours pour le changement de statut (accessibilité,
-          écrans tactiles) — même action que le drag & drop */}
-      <select
-        className={`statut-select statut-${task.status}`}
-        value={task.status}
-        onChange={e => onStatusChange(task, e.target.value)}
-      >
-        {COLONNES.map(c => <option key={c.status} value={c.status}>{c.label}</option>)}
-      </select>
+      {readOnly ? (
+        /* Lecture seule : badge de statut statique, aucune action */
+        <span className={`badge badge-${task.status === 'in_progress' ? 'in-progress' : task.status}`}>
+          {statut?.label ?? task.status}
+        </span>
+      ) : (
+        /* Menu déroulant de secours pour le changement de statut
+           (accessibilité, écrans tactiles) — même action que le drag & drop */
+        <select
+          className={`statut-select statut-${task.status}`}
+          value={task.status}
+          onChange={e => onStatusChange(task, e.target.value)}
+        >
+          {COLONNES.map(c => <option key={c.status} value={c.status}>{c.label}</option>)}
+        </select>
+      )}
     </div>
   );
 }
 
-// ── Page principale ────────────────────────────────────────
-export default function Taches() {
-  const { user, authHeaders, isAuthenticated } = useAuth();
+// ── Composant principal ────────────────────────────────────
+export default function TaskBoard({ readOnly = false, tasks: externalTasks = null }) {
+  const { user, authHeaders } = useAuth();
   const toast = useToast();
 
-  const [tasks, setTasks]               = useState([]);
+  const [tasks, setTasks]               = useState(externalTasks ?? []);
   const [departements, setDepartements] = useState([]);
-  const [loading, setLoading]           = useState(true);
+  const [loading, setLoading]           = useState(!readOnly);
   const [prioFilter, setPrioFilter]     = useState('');       // '' = toutes
   const [depFilter, setDepFilter]       = useState('');       // admin uniquement, '' = tous
   const [modalOpen, setModalOpen]       = useState(false);
   const [form, setForm]                 = useState(FORM_VIDE);
   const [saving, setSaving]             = useState(false);
 
-  const isAdmin   = user?.role === 'admin';
-  const isManager = user?.role === 'manager';
+  const isAdmin   = !readOnly && user?.role === 'admin';
+  const isManager = !readOnly && user?.role === 'manager';
   const canCreate = isAdmin || isManager;
+
+  // En lecture seule, les données viennent des props (dashboard consulté) :
+  // on les resynchronise si le manager change d'employé consulté.
+  useEffect(() => {
+    if (readOnly) setTasks(Array.isArray(externalTasks) ? externalTasks : []);
+  }, [readOnly, externalTasks]);
 
   const load = () => {
     const params = new URLSearchParams();
@@ -105,13 +125,13 @@ export default function Taches() {
   };
 
   useEffect(() => {
-    if (!isAuthenticated) { setLoading(false); return; }
+    if (readOnly) return;    // Pas de fetch : les données sont passées en props
     load();
     fetch('/api/departements', { headers: authHeaders })
       .then(r => (r.ok ? r.json() : []))
       .then(data => setDepartements(Array.isArray(data) ? data : []))
       .catch(() => {});
-  }, [isAuthenticated, depFilter]);
+  }, [readOnly, depFilter]);
 
   // Changement de statut optimiste : on applique localement tout de suite,
   // et on restaure l'état précédent si le serveur refuse.
@@ -179,27 +199,9 @@ export default function Taches() {
 
   const visible = tasks.filter(t => !prioFilter || t.priority === prioFilter);
 
-  if (!isAuthenticated) {
-    return (
-      <div className="page-enter">
-        <h1>Tâches</h1>
-        <p className="page-subtitle">Tâches de département</p>
-        <div className="empty-state">
-          <div className="empty-state-icon">✓</div>
-          <p>Connectez-vous pour voir les tâches de votre département</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="page-enter">
-      <h1>Tâches</h1>
-      <p className="page-subtitle">
-        {isAdmin ? 'Toutes les tâches de département' : 'Les tâches de votre département'}
-      </p>
-
-      {/* Barre d'outils : filtres + création */}
+    <div>
+      {/* Barre d'outils : filtres (+ création en mode interactif) */}
       <div className="page-toolbar kanban-toolbar">
         <div className="kanban-filters">
           <button className={!prioFilter ? 'btn-filter active' : 'btn-filter'} onClick={() => setPrioFilter('')}>Toutes</button>
@@ -239,9 +241,10 @@ export default function Taches() {
               <div
                 key={col.status}
                 className="kanban-col"
-                onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }}
-                onDragLeave={e => e.currentTarget.classList.remove('drag-over')}
-                onDrop={e => {
+                /* Le drop n'est actif qu'en mode interactif */
+                onDragOver={readOnly ? undefined : e => { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }}
+                onDragLeave={readOnly ? undefined : e => e.currentTarget.classList.remove('drag-over')}
+                onDrop={readOnly ? undefined : e => {
                   e.preventDefault();
                   e.currentTarget.classList.remove('drag-over');
                   const id = Number(e.dataTransfer.getData('text/task-id'));
@@ -257,20 +260,23 @@ export default function Taches() {
                   <TaskCard
                     key={t.id}
                     task={t}
+                    readOnly={readOnly}
                     isAdminView={isAdmin && !depFilter}
                     canManage={isAdmin || (isManager && t.department_id === user?.departement_id)}
                     onStatusChange={changeStatus}
                     onDelete={handleDelete}
                   />
                 ))}
-                {items.length === 0 && <div className="kanban-empty">Déposez une tâche ici</div>}
+                {items.length === 0 && (
+                  <div className="kanban-empty">{readOnly ? 'Aucune tâche' : 'Déposez une tâche ici'}</div>
+                )}
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Modal de création */}
+      {/* Modal de création (mode interactif, manager/admin) */}
       {modalOpen && (
         <div className="modal-backdrop" onClick={() => setModalOpen(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>

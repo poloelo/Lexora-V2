@@ -72,17 +72,24 @@ const replaceAssignees = db.transaction((todoId, assigneeIds) => {
   for (const id of assigneeIds) insert.run(todoId, id);
 });
 
+// Les todos "d'un utilisateur" : ceux qu'il a créés + ceux qui lui sont
+// assignés. Exportée pour la vue dashboard consultée par un manager
+// (routes/dashboard.js) : même requête, cible différente.
+export function getTodosOfUser(userId) {
+  const rows = db.prepare(`
+    SELECT DISTINCT t.id
+    FROM todos t
+    LEFT JOIN todo_assignees ta ON ta.todo_id = t.id
+    WHERE t.created_by = ? OR ta.assignee_id = ?
+    ORDER BY t.created_at DESC
+  `).all(userId, userId);
+  return rows.map(r => getTodoWithAssignees(r.id));
+}
+
 // GET — Mes todos : ceux que j'ai créés + ceux qui me sont assignés
 router.get('/', (req, res) => {
   try {
-    const rows = db.prepare(`
-      SELECT DISTINCT t.id
-      FROM todos t
-      LEFT JOIN todo_assignees ta ON ta.todo_id = t.id
-      WHERE t.created_by = ? OR ta.assignee_id = ?
-      ORDER BY t.created_at DESC
-    `).all(req.user.id, req.user.id);
-    res.json(rows.map(r => getTodoWithAssignees(r.id)));
+    res.json(getTodosOfUser(req.user.id));
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }

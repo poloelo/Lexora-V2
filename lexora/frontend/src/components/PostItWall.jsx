@@ -11,6 +11,14 @@
  * Création : tout le monde peut coller un post-it et l'assigner à un ou
  * plusieurs collègues via le multi-sélecteur (l'annuaire chargé est minimal :
  * id + nom uniquement — minimisation des données).
+ *
+ * Deux modes :
+ *  - interactif (défaut) : charge les todos de l'utilisateur connecté,
+ *    création / toggle / suppression actifs
+ *  - lecture seule (readOnly + todos et perspectiveId fournis) : mur d'un
+ *    employé consulté par son manager — affichage pur, aucune action ;
+ *    perspectiveId sert à orienter les libellés "de X" / "pour Y" du point
+ *    de vue de l'employé consulté, pas du manager qui regarde
  */
 
 import { useEffect, useState } from 'react';
@@ -22,19 +30,29 @@ const COULEURS = ['#fef3c7', '#dbeafe', '#dcfce7', '#fce7f3', '#ede9fe', '#ffedd
 
 const CONTENT_MAX = 280;
 
-export default function PostItWall() {
+export default function PostItWall({ readOnly = false, todos: externalTodos = null, perspectiveId = null }) {
   const { user, authHeaders } = useAuth();
   const toast = useToast();
 
-  const [todos, setTodos]         = useState([]);
+  // Point de vue pour les libellés : l'employé consulté en lecture seule,
+  // sinon l'utilisateur connecté
+  const perspective = perspectiveId ?? user?.id;
+
+  const [todos, setTodos]         = useState(externalTodos ?? []);
   const [employes, setEmployes]   = useState([]);   // Annuaire minimal (id + nom)
-  const [loading, setLoading]     = useState(true);
+  const [loading, setLoading]     = useState(!readOnly);
   const [content, setContent]     = useState('');
   const [color, setColor]         = useState(COULEURS[0]);
   const [assignees, setAssignees] = useState([]);   // ids sélectionnés
   const [saving, setSaving]       = useState(false);
 
+  // En lecture seule, les données viennent des props (dashboard consulté)
   useEffect(() => {
+    if (readOnly) setTodos(Array.isArray(externalTodos) ? externalTodos : []);
+  }, [readOnly, externalTodos]);
+
+  useEffect(() => {
+    if (readOnly) return;    // Pas de fetch : les données sont passées en props
     fetch('/api/todos', { headers: authHeaders })
       .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(data => { setTodos(Array.isArray(data) ? data : []); setLoading(false); })
@@ -44,7 +62,7 @@ export default function PostItWall() {
       .then(r => (r.ok ? r.json() : []))
       .then(data => setEmployes(Array.isArray(data) ? data : []))
       .catch(() => {});
-  }, []);
+  }, [readOnly]);
 
   const toggleAssignee = id =>
     setAssignees(prev => (prev.includes(id) ? prev.filter(a => a !== id) : [...prev, id]));
@@ -107,7 +125,8 @@ export default function PostItWall() {
 
   return (
     <div className="postit-section">
-      {/* Formulaire de création */}
+      {/* Formulaire de création — masqué en consultation */}
+      {!readOnly && (
       <form className="postit-form" onSubmit={creer}>
         <input
           value={content}
@@ -145,6 +164,7 @@ export default function PostItWall() {
           {saving ? <><span className="spinner" /> Ajout...</> : '+ Coller'}
         </button>
       </form>
+      )}
 
       {/* Le mur */}
       {loading ? (
@@ -160,16 +180,18 @@ export default function PostItWall() {
         <div className="postit-wall">
           {todos.map(t => {
             const done      = t.status === 'done';
-            const isCreator = t.created_by === user?.id;
-            const others    = (t.assignees || []).filter(a => a.id !== user?.id);
+            // Libellés calculés du point de vue de la perspective (l'employé
+            // consulté en lecture seule, soi-même sinon)
+            const isCreator = t.created_by === perspective;
+            const others    = (t.assignees || []).filter(a => a.id !== perspective);
             return (
               <div key={t.id} className={`postit${done ? ' done' : ''}`} style={{ background: t.color }}>
                 <div className="postit-top">
-                  <label className="postit-check" title={done ? 'Marquer à faire' : 'Marquer fait'}>
-                    <input type="checkbox" checked={done} onChange={() => toggle(t)} />
+                  <label className="postit-check" title={readOnly ? undefined : (done ? 'Marquer à faire' : 'Marquer fait')}>
+                    <input type="checkbox" checked={done} disabled={readOnly} onChange={readOnly ? undefined : () => toggle(t)} />
                     <span className="postit-checkmark">{done ? '✔' : ''}</span>
                   </label>
-                  {isCreator && (
+                  {!readOnly && isCreator && (
                     <button className="postit-delete" title="Supprimer" onClick={() => supprimer(t)}>🗑</button>
                   )}
                 </div>

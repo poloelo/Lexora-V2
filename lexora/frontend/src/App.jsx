@@ -3,9 +3,7 @@ import { ToastProvider } from './contexts/ToastContext.jsx';
 import { AuthProvider, useAuth } from './contexts/AuthContext.jsx';
 
 import Dashboard       from './pages/Dashboard.jsx';
-import Taches          from './pages/Taches.jsx';
 import Clients         from './pages/Clients.jsx';
-import Calendrier      from './pages/Calendrier.jsx';
 import CoffreFort      from './pages/Coffre_fort.jsx';
 import Assistant       from './pages/Assistant.jsx';
 import Equipe          from './pages/Equipe.jsx';
@@ -19,19 +17,21 @@ function PrivateRoute({ children }) {
   return isAuthenticated ? children : <Navigate to="/login" replace />;
 }
 
-function AdminRoute({ children }) {
+// La page Équipe sert aussi aux managers (consultation des dashboards de
+// leur département) — plus seulement à l'admin.
+function ManagerRoute({ children }) {
   const { isAuthenticated, user } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (user?.role !== 'admin') return <Navigate to="/" replace />;
+  if (user?.role !== 'admin' && user?.role !== 'manager') return <Navigate to="/" replace />;
   return children;
 }
 
 // ── Navigation principale ─────────────────────────────────
+// Tâches et Calendrier ne sont plus des pages : leur contenu vit dans le
+// Dashboard (hub unique) — voir pages/Dashboard.jsx.
 const NAV_PRINCIPAL = [
   { to: '/',           label: 'Dashboard',    icon: '▦', end: true },
-  { to: '/taches',     label: 'Tâches',       icon: '✓' },
   { to: '/clients',    label: 'Clients',      icon: '◉' },
-  { to: '/calendrier', label: 'Calendrier',   icon: '◫' },
   { to: '/documents',  label: 'Documents',    icon: '📁' },
   { to: '/assistant',  label: 'Assistant IA', icon: '◈' },
 ];
@@ -40,8 +40,9 @@ const NAV_PRINCIPAL = [
 function Sidebar() {
   const { isAuthenticated, user, logout } = useAuth();
   const navigate = useNavigate();
-  const isAdmin  = user?.role === 'admin';
-  const nomCourt = user?.prenom || user?.nom || '';
+  const isAdmin   = user?.role === 'admin';
+  const isManager = user?.role === 'manager';
+  const nomCourt  = user?.prenom || user?.nom || '';
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
@@ -66,13 +67,15 @@ function Sidebar() {
       <div className="sidebar-spacer" />
 
       {/* Section utilisateur connecté */}
-      {/* L'espace personnel (post-its, planning) est intégré au Dashboard :
-          seul l'admin a un lien supplémentaire, vers la page Équipe */}
+      {/* L'espace personnel (post-its, tâches, calendrier) est intégré au
+          Dashboard. Le lien Équipe s'affiche pour l'admin (gestion des
+          employés + tous les dashboards) et le manager (dashboards de son
+          département, lecture seule). */}
       {isAuthenticated ? (
         <div className="sidebar-admin-section">
-          {isAdmin && (
+          {(isAdmin || isManager) && (
             <>
-              <span className="sidebar-section-label">Administration</span>
+              <span className="sidebar-section-label">{isAdmin ? 'Administration' : 'Management'}</span>
               <ul>
                 <li>
                   <NavLink to="/equipe">
@@ -117,16 +120,17 @@ function AppLayout() {
       <main className="content">
         <Routes>
           <Route path="/"           element={<Dashboard />} />
-          <Route path="/taches"     element={<Taches />} />
           <Route path="/clients"    element={<Clients />} />
-          <Route path="/calendrier" element={<Calendrier />} />
           <Route path="/documents"  element={<CoffreFort />} />
           <Route path="/assistant"  element={<Assistant />} />
-          <Route path="/equipe"     element={<AdminRoute><Equipe /></AdminRoute>} />
+          <Route path="/equipe"     element={<ManagerRoute><Equipe /></ManagerRoute>} />
           {/* Ancienne page "Mon espace" fusionnée dans le Dashboard */}
           <Route path="/mon-espace" element={<Navigate to="/" replace />} />
           {/* Ancienne page "Clients & Factures" — Factures retirée du périmètre */}
           <Route path="/business" element={<Navigate to="/clients" replace />} />
+          {/* Anciennes pages Tâches et Calendrier — contenu déplacé dans le Dashboard */}
+          <Route path="/taches"     element={<Navigate to="/" replace />} />
+          <Route path="/calendrier" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
     </div>
