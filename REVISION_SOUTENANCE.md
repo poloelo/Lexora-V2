@@ -301,9 +301,9 @@ Trois natures d'événements dans une seule table, selon `employe_id` et `type` 
 |---|---|---|---|
 | Général | `employe_id` NULL | tout utilisateur (modif : créateur, admin) | tout le monde |
 | Planning | `type='planning'` + `employe_id` | **manager du département de la cible** (ou admin) ; couleur verte imposée | tout le département de l'employé ciblé |
-| Personnel | `employe_id` = soi | soi-même (couleur au choix) | créateur + **manager de son département** |
+| Personnel | `employe_id` = soi | soi-même (couleur au choix) | créateur sur son calendrier ; manager/admin **uniquement via la consultation** `GET /api/dashboard/:userId` |
 
-- **`VISIBILITY_WHERE`** : la règle de visibilité est une clause SQL à paramètres nommés (`@me`, `@dep`, `@manager`) appliquée au `GET` pour les non-admins — général OU me cible OU créé par moi OU planning de mon département OU (manager ET cible dans mon département). Un miroir JS `canSee` sert au `GET /:id` ; un événement invisible renvoie **404 et non 403**, pour ne pas révéler son existence.
+- **`VISIBILITY_WHERE`** : le calendrier du dashboard est **personnel pour tous les rôles, admin compris** — clause SQL à paramètres nommés (`@me`, `@dep`) : général OU me cible OU créé par moi OU planning de mon département. Pas de passe-droit admin/manager sur l'affichage : la vision des employés passe par la consultation. `canSee` (accès unitaire GET /:id, PUT, DELETE) reste plus large — admin partout, manager sur son département — pour préserver les droits d'administration ; un événement inaccessible renvoie **404 et non 403**, pour ne pas révéler son existence.
 - **`managesTarget(user, employeId)`** : admin partout ; manager uniquement si la cible appartient à son département (relit le département de la cible en base). Même philosophie que `canManage` de tasks.js.
 - **`checkTargetRights`** : à la création ET à la modification, les droits sont revérifiés sur les valeurs **finales** (changement de type ou de cible compris) — on ne peut pas transformer son événement perso en planning d'autrui.
 
@@ -515,7 +515,7 @@ On applique le changement dans l'UI avant la réponse serveur, en gardant l'éta
 Deux usages différents : `tasks` = travail structuré au niveau d'un **département** (kanban, priorité, échéance, géré par les managers) ; `todos` = mini-notes **personnelles** multi-assignées (N-N via todo_assignees). Les fusionner aurait donné une table à moitié vide avec des règles de droits contradictoires.
 
 **« Pourquoi avoir fusionné le planning et les événements ? »**
-Les deux décrivaient la même chose — un créneau daté — et le calendrier devait recoller les deux sources à chaque affichage. On a réalisé que planning ⊂ événements : un créneau de planning est un événement de type `planning` ciblant un employé, posé par son manager. Résultat : une table et un router en moins, un onglet admin en moins, et des règles de visibilité claires (général = tous, planning = le département, personnel = soi + son manager).
+Les deux décrivaient la même chose — un créneau daté — et le calendrier devait recoller les deux sources à chaque affichage. On a réalisé que planning ⊂ événements : un créneau de planning est un événement de type `planning` ciblant un employé, posé par son manager. Résultat : une table et un router en moins, un onglet admin en moins, et des règles de visibilité claires (général = tous, planning = le département, personnel = soi — le manager le consulte via le dashboard de l'employé).
 
 **« Comment marchent vos migrations sans outil type Knex/Prisma ? »**
 Chaque migration inspecte le schéma réel (`PRAGMA table_info`, `sqlite_master`) et ne s'exécute que si l'ancien état est détecté, dans une transaction. Idempotent : un redémarrage sur base migrée est un no-op.

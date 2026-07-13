@@ -14,7 +14,16 @@
  *
  *  3. PERSONNEL (employe_id = soi-même, type ≠ planning) — échéances et
  *     organisation de sa journée. L'employé choisit la couleur. Visible
- *     uniquement par son créateur et par le manager de son département.
+ *     par son créateur sur son calendrier ; le manager du département
+ *     (et l'admin) y accèdent uniquement via la consultation du dashboard
+ *     de l'employé (GET /api/dashboard/:userId).
+ *
+ * Le calendrier du dashboard est PERSONNEL pour tout le monde, admin
+ * compris : chacun voit les événements généraux, ceux qui le ciblent,
+ * ceux qu'il a créés, et le planning de son propre département. L'admin
+ * garde tous ses droits d'écriture (canSee/canManageEvent), mais sa vue
+ * n'agrège plus toute l'entreprise — l'emploi du temps d'un employé se
+ * consulte depuis la page Équipe, pas depuis son propre calendrier.
  *
  * Les dates sont stockées au format ISO 8601 : "2026-05-20T09:00:00"
  * Ce format est compris directement par new Date() côté frontend.
@@ -43,24 +52,23 @@ const EVENT_SELECT = `
   LEFT JOIN employes cre ON cre.id = ev.created_by_id
 `;
 
-// Clause de visibilité pour les non-admins (voir l'en-tête du fichier) :
+// Clause de visibilité du calendrier personnel (voir l'en-tête) :
 // général OU me concerne OU créé par moi OU planning de mon département
-// OU (je suis manager ET la cible est dans mon département → je vois aussi
-// les événements personnels de mon équipe).
+// ("les grandes lignes de la semaine" restent partagées dans l'équipe).
+// Volontairement PAS de passe-droit admin/manager ici : la vision des
+// calendriers des employés passe par GET /api/dashboard/:userId.
 const VISIBILITY_WHERE = `(
   ev.employe_id IS NULL
   OR ev.employe_id = @me
   OR ev.created_by_id = @me
   OR (ev.type = 'planning' AND cib.departement_id = @dep)
-  OR (@manager = 1 AND cib.departement_id = @dep)
 )`;
 
 // Paramètres nommés de la clause de visibilité pour l'utilisateur courant.
 // @dep = -1 si sans département : l'égalité ne matche alors jamais.
 const visibilityParams = user => ({
-  me:      user.id,
-  dep:     user.departement_id ?? -1,
-  manager: user.role === 'manager' ? 1 : 0,
+  me:  user.id,
+  dep: user.departement_id ?? -1,
 });
 
 const getEvent = id => db.prepare(`${EVENT_SELECT} WHERE ev.id = ?`).get(id);
@@ -84,7 +92,11 @@ function canManageEvent(user, event) {
   return event.created_by_id === user.id;
 }
 
-// Miroir JS de VISIBILITY_WHERE, pour GET /:id.
+// Droit d'ACCÈS unitaire à un événement (GET /:id, PUT, DELETE).
+// Plus large que VISIBILITY_WHERE (qui ne gère que l'affichage du
+// calendrier personnel) : l'admin accède à tout, et le manager aux
+// événements de son département — nécessaire pour administrer le planning
+// et cohérent avec la consultation du dashboard de l'équipe.
 function canSee(user, event) {
   if (user.role === 'admin') return true;
   if (event.employe_id == null) return true;
@@ -129,15 +141,14 @@ function checkTargetRights(user, type, employe_id) {
   return null;
 }
 
-// Les événements visibles par un utilisateur donné (admin : tout ; sinon :
-// filtre de visibilité, voir en-tête). Exportée pour la vue dashboard
-// consultée par un manager (routes/dashboard.js) : le calendrier affiché
-// est celui que la cible verrait elle-même.
+// Les événements du calendrier personnel d'un utilisateur donné — même
+// filtre pour tous les rôles, admin compris (sa vue est personnelle, ses
+// droits d'écriture restent entiers via canSee/canManageEvent). Exportée
+// pour la vue dashboard consultée par un manager (routes/dashboard.js) :
+// le calendrier affiché est celui que la cible verrait elle-même.
 export function getEventsVisibleBy(user) {
-  return user.role === 'admin'
-    ? db.prepare(`${EVENT_SELECT} ORDER BY ev.date_debut ASC`).all()
-    : db.prepare(`${EVENT_SELECT} WHERE ${VISIBILITY_WHERE} ORDER BY ev.date_debut ASC`)
-        .all(visibilityParams(user));
+  return db.prepare(`${EVENT_SELECT} WHERE ${VISIBILITY_WHERE} ORDER BY ev.date_debut ASC`)
+    .all(visibilityParams(user));
 }
 
 // GET — Événements visibles par l'utilisateur, triés chronologiquement.
