@@ -154,7 +154,8 @@ db.exec(`
   --     du département de l'employé ciblé, visible par tout son département,
   --     toujours vert (#10b981)
   --  3. Événement personnel (employe_id = soi-même)    : visible par son
-  --     créateur et par le manager de son département
+  --     créateur ; manager et admin y accèdent uniquement via la
+  --     consultation du dashboard (GET /api/dashboard/:userId)
   -- Types valides : 'rdv' | 'tache' | 'rappel' | 'evenement' | 'planning'
   -- couleur : code hexadécimal CSS (ex : '#7c6af7'), choisie par l'utilisateur
   -- Les dates sont stockées en ISO 8601 : "2026-05-20T09:00:00"
