@@ -22,6 +22,7 @@ import { fr } from 'date-fns/locale';
 
 import { useEffect, useState } from 'react';
 import { useToast } from '../contexts/ToastContext.jsx';
+import { useAuth } from '../contexts/AuthContext.jsx';
 
 // ── Configuration du localizer en français ────────────────
 // Le localizer indique à react-big-calendar comment formater
@@ -99,6 +100,7 @@ export default function Calendrier() {
   const [saving, setSaving] = useState(false);
 
   const toast = useToast();
+  const { authHeaders } = useAuth();
 
   // ── Chargement des données ──────────────────────────────
   // On fusionne deux sources :
@@ -107,8 +109,8 @@ export default function Calendrier() {
   const loadEvents = async () => {
     try {
       const [evtsData, planData] = await Promise.all([
-        fetch('/api/evenements').then(r => r.json()).catch(() => []),
-        fetch('/api/planning').then(r => r.json()).catch(() => []),
+        fetch('/api/evenements', { headers: authHeaders }).then(r => r.json()).catch(() => []),
+        fetch('/api/planning', { headers: authHeaders }).then(r => r.json()).catch(() => []),
       ]);
 
       // Conversion des événements (format API → format react-big-calendar)
@@ -176,7 +178,7 @@ export default function Calendrier() {
     try {
       await fetch('/api/evenements', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body:    JSON.stringify({
           titre:       form.titre,
           description: form.description || null,
@@ -205,7 +207,7 @@ export default function Calendrier() {
       return;
     }
     try {
-      await fetch(`/api/evenements/${event.id}`, { method: 'DELETE' });
+      await fetch(`/api/evenements/${event.id}`, { method: 'DELETE', headers: authHeaders });
       setDetail(null);
       // Retrait immédiat de l'état local, plus réactif qu'un rechargement complet
       setEvents(prev => prev.filter(e => e.id !== event.id));

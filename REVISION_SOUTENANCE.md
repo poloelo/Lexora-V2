@@ -107,12 +107,12 @@ Lexora-V2/
     │   │   ├── departements.js           # Référentiel départements — lecture authentifiée, écriture admin
     │   │   ├── employes.js               # Annuaire employés — admin (+ /selector pour manager)
     │   │   ├── automations.js            # Règles d'automatisation (CRUD descriptif) — JWT requis
-    │   │   ├── clients.js                # CRM clients (particulier/entreprise) — CRUD ouvert
-    │   │   ├── factures.js               # Factures — CRUD ouvert
-    │   │   ├── planning.js               # Créneaux horaires des employés — CRUD ouvert
-    │   │   ├── evenements.js             # Événements du calendrier — CRUD ouvert
-    │   │   ├── documents.js              # Coffre-fort : dossiers + upload/download Multer
-    │   │   └── assistant.js              # POST → proxy vers ollamaService.chat()
+    │   │   ├── clients.js                # CRM clients (particulier/entreprise) — protégé JWT
+    │   │   ├── factures.js               # Factures — protégé JWT
+    │   │   ├── planning.js               # Créneaux horaires des employés — protégé JWT
+    │   │   ├── evenements.js             # Événements du calendrier — protégé JWT
+    │   │   ├── documents.js              # Coffre-fort : dossiers + upload/download Multer — protégé JWT
+    │   │   └── assistant.js              # POST → proxy vers ollamaService.chat() — protégé JWT
     │   ├── scripts/seed.js               # Données de démo idempotentes (mdp commun : demo1234)
     │   └── uploads/                      # Fichiers physiques uploadés (volume Docker en prod)
     │
@@ -172,16 +172,18 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 | `GET/POST/PUT/DELETE /api/employes` | employes.js | + requireRole(admin) | employes ⋈ departements | CRUD sans password_hash |
 | `PUT /api/employes/:id/password` | employes.js | + requireRole(admin) | employes | `{ message }` |
 | `GET/POST/PUT/DELETE /api/automations` | automations.js | verifyJWT seul | automations | CRUD |
-| `GET/POST/PUT/DELETE /api/clients` | clients.js | — (public) | clients | CRUD |
-| `GET/POST/PUT/DELETE /api/factures` | factures.js | — (public) | factures | CRUD |
-| `GET/POST/PUT/DELETE /api/planning` | planning.js | — (public) | planning ⋈ employes | CRUD avec `employe_nom` joint |
-| `GET/POST/PUT/DELETE /api/evenements` | evenements.js | — (public) | evenements | CRUD |
-| `GET /api/documents` | documents.js | — | documents | Liste (filtre `?dossier_id=`) |
-| `POST /api/documents/upload` | documents.js | multer `upload.single('file')` | documents + disque `/uploads` | 201 + métadonnées |
-| `GET /api/documents/:id/download` | documents.js | — | documents + disque | `res.download()` (le fichier) |
-| `DELETE /api/documents/:id` | documents.js | — | documents + disque | `{ message }` |
-| `GET/POST/DELETE /api/documents/dossiers` | documents.js | — | dossiers (+ récursion) | CRUD |
-| `POST /api/assistant` | assistant.js | — | — (appelle ollamaService.chat) | `{ response }` ou 500 |
+| `GET/POST/PUT/DELETE /api/clients` | clients.js | verifyJWT, loadUser | clients | CRUD |
+| `GET/POST/PUT/DELETE /api/factures` | factures.js | verifyJWT, loadUser | factures | CRUD |
+| `GET/POST/PUT/DELETE /api/planning` | planning.js | verifyJWT, loadUser | planning ⋈ employes | CRUD avec `employe_nom` joint |
+| `GET/POST/PUT/DELETE /api/evenements` | evenements.js | verifyJWT, loadUser | evenements | CRUD |
+| `GET /api/documents` | documents.js | verifyJWT, loadUser | documents | Liste (filtre `?dossier_id=`) |
+| `POST /api/documents/upload` | documents.js | verifyJWT, loadUser + multer `upload.single('file')` | documents + disque `/uploads` | 201 + métadonnées |
+| `GET /api/documents/:id/download` | documents.js | verifyJWT, loadUser | documents + disque | `res.download()` (le fichier) |
+| `DELETE /api/documents/:id` | documents.js | verifyJWT, loadUser | documents + disque | `{ message }` |
+| `GET/POST/DELETE /api/documents/dossiers` | documents.js | verifyJWT, loadUser | dossiers (+ récursion) | CRUD |
+| `POST /api/assistant` | assistant.js | verifyJWT, loadUser | — (appelle ollamaService.chat) | `{ response }` ou 500 |
+
+> **À retenir** : toute l'API métier exige un JWT (`router.use(verifyJWT, loadUser)` en tête de chaque router). Seuls `POST /api/auth/login` et `GET /api/health` sont publics — il faut bien pouvoir se connecter, et la sonde de santé sert au monitoring.
 
 ### 3.2 Côté frontend : Page → Composants → Appels API → State
 
@@ -339,8 +341,12 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 **Fil d'Ariane** (Coffre_fort.jsx `getBreadcrumbs`)
 - Remonte l'arborescence : depuis `currentFolderId`, boucle `while` sur `parent_id` jusqu'à `null` (racine), en insérant chaque dossier **au début** du tableau (`unshift`) pour avoir l'ordre racine → courant.
 
-**Garde de route** (App.jsx)
-- `AdminRoute` : rend les enfants si connecté **et** `user.role === 'admin'` ; sinon `<Navigate to="/login" replace />` ou vers `/` (`replace` : pas d'entrée dans l'historique, le bouton retour ne re-piège pas l'utilisateur). L'ancienne route `/mon-espace` redirige vers `/` depuis la fusion avec le Dashboard.
+**Gardes de route** (App.jsx)
+- `PrivateRoute` enveloppe **tout le layout** : l'API entière exigeant un JWT, l'application est derrière le login (seule `/login` est accessible déconnecté).
+- `AdminRoute` : en plus, vérifie `user.role === 'admin'`, sinon redirige vers `/` (`replace` : pas d'entrée dans l'historique, le bouton retour ne re-piège pas l'utilisateur). L'ancienne route `/mon-espace` redirige vers `/` depuis la fusion avec le Dashboard.
+
+**Téléchargement authentifié** (Coffre_fort.jsx `telecharger`)
+- La route de download exigeant le JWT, un simple `<a href>` ne suffit plus (impossible d'y joindre un header). On `fetch` le fichier avec `authHeaders`, on récupère un **blob**, on crée une URL objet (`URL.createObjectURL`), on déclenche un clic sur un lien temporaire avec le nom original, puis on libère la mémoire (`revokeObjectURL`).
 - **À dire absolument** : ces gardes sont du **confort UX, pas de la sécurité** — n'importe qui peut modifier le JS du navigateur. La vraie barrière est côté serveur (verifyJWT + loadUser + requireRole).
 
 ---
@@ -389,12 +395,12 @@ Toutes les requêtes utilisent des **placeholders `?`** (`db.prepare('... WHERE 
 
 ### 5.7 Limites connues (à annoncer soi-même — ça fait gagner des points)
 
-1. **Routes non protégées** : clients, factures, planning, evenements, documents, assistant sont **sans JWT** (choix de périmètre du MVP ; le rate-limit et le CORS s'appliquent quand même). Amélioration n°1 : généraliser `verifyJWT`.
-2. **`automations.js`** : `isAdmin = verifyJWT` — vérifie l'authentification mais **pas le rôle** (contrairement à employes.js qui utilise `requireRole('admin')`). À corriger avec `requireRole('admin')`.
-3. **localStorage vs cookie httpOnly** pour le JWT (voir 5.1).
-4. **Pas de refresh token** : une seule durée de 24 h.
-5. **HTTP interne** : Nginx→backend en clair (acceptable dans un réseau Docker privé ; en prod publique il faudrait TLS au niveau de Nginx).
-6. **Pas de tests automatisés** ; QA manuelle documentée dans `QA_REPORT.md`.
+1. **`automations.js`** : `isAdmin = verifyJWT` — vérifie l'authentification mais **pas le rôle** (contrairement à employes.js qui utilise `requireRole('admin')`). À corriger avec `requireRole('admin')`.
+2. **localStorage vs cookie httpOnly** pour le JWT (voir 5.1).
+3. **Pas de refresh token** : une seule durée de 24 h.
+4. **HTTP interne** : Nginx→backend en clair (acceptable dans un réseau Docker privé ; en prod publique il faudrait TLS au niveau de Nginx).
+5. **Pas de tests automatisés** ; QA manuelle documentée dans `QA_REPORT.md`.
+6. **Pas de granularité par rôle** sur les modules métier (clients, factures, documents...) : tout utilisateur authentifié y accède à l'identique — un raffinement possible serait de réserver l'écriture à certains rôles via `requireRole`.
 
 ---
 
@@ -455,7 +461,7 @@ Le token ne sert qu'à identifier ; le middleware `loadUser` relit le rôle et l
 Uniquement pour l'UI (afficher/cacher la sidebar admin sans appel réseau). Aucune autorisation serveur ne s'appuie dessus.
 
 **« Que se passe-t-il si j'appelle l'API directement avec curl, sans passer par le front ? »**
-Les gardes React ne protègent rien — c'est assumé. Les routes sensibles (tasks, todos, employes, departements) exigent le Bearer token et revalident les rôles serveur. Les routes du MVP restées publiques sont une limite connue, listée dans mes améliorations prioritaires.
+Les gardes React ne protègent rien — c'est assumé. **Toute l'API métier** exige le Bearer token (verifyJWT + loadUser en tête de chaque router) et les rôles sont revalidés côté serveur ; sans token, curl reçoit un 401 sur tout sauf /api/auth/login et /api/health.
 
 **« Expliquez une injection SQL et pourquoi vous êtes protégés. »**
 Injection = faire interpréter une valeur utilisateur comme du code SQL. Nous utilisons exclusivement des requêtes préparées avec placeholders `?` : la valeur est transmise séparément du SQL compilé, elle ne peut jamais être interprétée comme du code.
@@ -476,7 +482,7 @@ Servir les statiques efficacement, régler le routing SPA (`try_files`), et expo
 Jamais commité (`.gitignore`) ; `.env.example` documente les variables. Le secret JWT est généré avec `crypto.randomBytes(32)`.
 
 **« Qu'amélioreriez-vous en premier ? »**
-① Protéger toutes les routes par JWT (clients, factures, documents...) ; ② corriger le contrôle de rôle sur automations ; ③ tests automatisés (Jest/Supertest côté API) ; ④ refresh tokens + cookie httpOnly.
+① Corriger le contrôle de rôle sur automations (`requireRole('admin')`) ; ② tests automatisés (Jest/Supertest côté API) ; ③ refresh tokens + cookie httpOnly ; ④ granularité de rôles sur les modules métier (écriture factures réservée à certains rôles, par exemple).
 
 ---
 

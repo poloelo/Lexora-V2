@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useToast } from '../contexts/ToastContext.jsx';
+import { useAuth } from '../contexts/AuthContext.jsx';
 
 // Icônes texte par type de fichier (pas de dépendance externe)
 const FILE_ICONS = {
@@ -48,14 +49,15 @@ export default function CoffreFort() {
 
   const fileInputRef = useRef(null);
   const toast = useToast();
+  const { authHeaders } = useAuth();
 
   // ── Chargement initial ────────────────────────────────
   // On charge dossiers ET documents en parallèle (Promise.all = plus rapide)
   const load = async () => {
     try {
       const [dos, docs] = await Promise.all([
-        fetch('/api/documents/dossiers').then(r => r.json()).catch(() => []),
-        fetch('/api/documents').then(r => r.json()).catch(() => []),
+        fetch('/api/documents/dossiers', { headers: authHeaders }).then(r => r.json()).catch(() => []),
+        fetch('/api/documents', { headers: authHeaders }).then(r => r.json()).catch(() => []),
       ]);
       setDossiers(Array.isArray(dos) ? dos : []);
       setDocuments(Array.isArray(docs) ? docs : []);
@@ -100,7 +102,7 @@ export default function CoffreFort() {
     try {
       await fetch('/api/documents/dossiers', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
           nom:       folderNom,
           description: folderDesc || null,
@@ -134,6 +136,8 @@ export default function CoffreFort() {
         method: 'POST',
         // ⚠️ Ne PAS mettre Content-Type manuellement ici :
         // le navigateur doit le définir lui-même pour inclure le "boundary" multipart
+        // (authHeaders n'ajoute que Authorization, pas de Content-Type)
+        headers: authHeaders,
         body: formData,
       });
       if (!res.ok) throw new Error();
@@ -158,7 +162,7 @@ export default function CoffreFort() {
   const supprimerDossier = async id => {
     if (!confirm('Supprimer ce dossier et tous ses fichiers ?')) return;
     try {
-      await fetch(`/api/documents/dossiers/${id}`, { method: 'DELETE' });
+      await fetch(`/api/documents/dossiers/${id}`, { method: 'DELETE', headers: authHeaders });
       await load();
       toast('Dossier supprimé');
     } catch {
@@ -169,11 +173,31 @@ export default function CoffreFort() {
   // ── Supprimer un document ─────────────────────────────
   const supprimerDocument = async id => {
     try {
-      await fetch(`/api/documents/${id}`, { method: 'DELETE' });
+      await fetch(`/api/documents/${id}`, { method: 'DELETE', headers: authHeaders });
       setDocuments(prev => prev.filter(d => d.id !== id));
       toast('Document supprimé');
     } catch {
       toast('Erreur lors de la suppression', 'error');
+    }
+  };
+
+  // ── Télécharger un document ───────────────────────────
+  // La route de download est protégée par JWT : un simple <a href> ne peut pas
+  // envoyer le header Authorization. On récupère donc le fichier en blob via
+  // fetch, puis on déclenche le téléchargement avec un lien objet temporaire.
+  const telecharger = async doc => {
+    try {
+      const res = await fetch(`/api/documents/${doc.id}/download`, { headers: authHeaders });
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = doc.nom;   // Nom original, pas le nom timestampé du disque
+      a.click();
+      URL.revokeObjectURL(url);  // Libère la mémoire du blob
+    } catch {
+      toast('Erreur lors du téléchargement', 'error');
     }
   };
 
@@ -354,14 +378,14 @@ export default function CoffreFort() {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      {/* Lien de téléchargement direct — pas besoin de JS */}
-                      <a
-                        href={`/api/documents/${doc.id}/download`}
-                        download={doc.nom}
+                      {/* Téléchargement via fetch authentifié (JWT dans le header) */}
+                      <button
                         className="btn-download"
+                        title="Télécharger"
+                        onClick={() => telecharger(doc)}
                       >
                         ↓
-                      </a>
+                      </button>
                       <button className="danger" onClick={() => supprimerDocument(doc.id)}>
                         Supprimer
                       </button>
