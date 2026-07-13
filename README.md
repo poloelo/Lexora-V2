@@ -1,6 +1,6 @@
 # Lexora — ERP Full-Stack Application
 
-> **Holberton School Portfolio Project** — A full-stack Enterprise Resource Planning (ERP) web application for small teams: task management, CRM, invoicing, calendar, document vault, and AI assistant.
+> **Holberton School Portfolio Project** — A full-stack web application for small teams, organized around a **single dashboard hub**: sticky notes, department task board and unified calendar on one page, plus a client CRM with automatic document folders, a document vault, a local AI assistant, and read-only team dashboard consultation for managers.
 
 [![Node.js](https://img.shields.io/badge/Node.js-18-green?logo=nodedotjs)](https://nodejs.org)
 [![React](https://img.shields.io/badge/React-18-blue?logo=react)](https://react.dev)
@@ -14,12 +14,11 @@
 
 - [Overview](#overview)
 - [Features](#features)
+- [Roles & Permissions](#roles--permissions)
 - [Application Architecture](#application-architecture)
 - [Database Diagram](#database-diagram)
 - [Tech Stack](#tech-stack)
 - [Quick Start](#quick-start)
-  - [Docker (Recommended)](#docker-recommended)
-  - [Local Development](#local-development)
 - [Environment Variables](#environment-variables)
 - [API Reference](#api-reference)
 - [Project Structure](#project-structure)
@@ -30,15 +29,18 @@
 
 ## Overview
 
-**Lexora** is a centralized workspace for small business operations. It replaces scattered tools with a single, integrated application:
+**Lexora** is a centralized workspace for small business operations. Instead of scattering the daily workflow across many screens, everything a user needs lives on **one dashboard**:
 
-- A unified **dashboard** with live KPIs (task count, invoice totals, pending items)
-- **Task management** for project tracking and quick notes
-- **CRM + Invoicing** for client and billing management
-- **Interactive calendar** integrating events and staff schedules
-- **Document vault** with folder hierarchy and drag-and-drop uploads
-- **AI assistant** powered by a local LLM via Ollama
-- **Admin panel** for employee directory, schedules, and automation rules
+1. **Sticky notes (post-its)** — personal mini-tasks, assignable to any colleague, rendered as a colored post-it wall
+2. **Department task board** — kanban (todo / in progress / done) shared by the whole department; managers create the tasks ("they give the directives"), everyone moves the cards
+3. **Unified calendar** — general events, personal reminders (user-picked colors), and green **planning** blocks placed by the department manager
+
+Around the hub:
+
+- **Clients** — CRM where each client automatically gets a dedicated folder in the document vault
+- **Documents** — hierarchical vault with drag-and-drop uploads and authenticated downloads
+- **AI Assistant** — chat with a local LLM via Ollama (no data leaves the machine)
+- **Équipe** — admins manage employee accounts; **managers consult the dashboard of each member of their department in strict read-only mode**
 
 ---
 
@@ -46,14 +48,34 @@
 
 | Module | Description |
 |--------|-------------|
-| 📊 **Dashboard** | Animated KPI cards — task counts, invoice totals, pending items |
-| ✅ **Tasks** | Department-level tasks on a kanban board (drag & drop, priority, due date) — visible to every member of the department |
-| 📌 **Todos (sticky notes)** | Personal mini-tasks assigned to one or more employees, rendered as colored post-its on the employee dashboard |
-| 💶 **Clients & Invoices** | Contact management + invoices with status tracking (pending / paid / cancelled) |
-| 📅 **Calendar** | Month/week/day views, click-to-create events, staff schedule integration |
-| 📁 **Document Vault** | Hierarchical folder tree, drag-and-drop upload, file download, 50 MB limit |
+| 🏠 **Dashboard hub** | Post-its → department kanban → calendar, stacked on a single page |
+| 📌 **Post-its** | Personal sticky notes with color picker, multi-assignment to colleagues, optimistic done/undone toggle |
+| ✅ **Task board** | Department-level kanban: HTML5 drag & drop + select fallback, priority/due-date badges, creation reserved to managers (own department) and admins |
+| 📅 **Calendar** | Unified calendar: general events (everyone), personal events (own color, private), and green planning blocks managed by the department manager. Month/week/day views, click-to-create |
+| 👁 **Team dashboards** | A manager (or admin) opens the read-only dashboard of an employee: their post-its, department tasks and calendar — zero write action available |
+| 👥 **Clients** | Contact management (individual/company); each client gets an auto-created sub-folder under the fixed `Clients/` vault folder; deletion asks explicitly what to do with the folder |
+| 📁 **Document Vault** | Folder tree, drag-and-drop upload (50 MB max), authenticated blob download, recursive folder deletion |
 | 🤖 **AI Assistant** | Real-time chat with a local LLM (Ollama / llama3.2) |
-| 👥 **Team (Admin)** | Employee directory, shift planning, automation rule management |
+| 🛡 **Team (Admin)** | Employee directory: account creation with role and department, password reset, deletion with GDPR-aware cascades |
+
+---
+
+## Roles & Permissions
+
+Three roles: `employe` < `manager` < `admin`. The JWT only identifies the user — **the role and department are re-read from the database on every request** (`loadUser` middleware), so a demoted or deleted account loses access instantly.
+
+| Capability | employe | manager | admin |
+|---|---|---|---|
+| Own dashboard (post-its, department tasks, personal calendar) | ✅ | ✅ | ✅ |
+| Create / assign post-its to colleagues | ✅ | ✅ | ✅ |
+| Move kanban cards (status) of own department | ✅ | ✅ | ✅ (all) |
+| Create / edit / delete department tasks | — | own department | everywhere |
+| Place green **planning** events on an employee | — | own department | everywhere |
+| Create general / personal calendar events | ✅ | ✅ | ✅ |
+| Consult an employee's dashboard (read-only) | — | own department | everyone |
+| Manage employee accounts / departments | — | — | ✅ |
+
+**Calendar visibility is personal for every role, admin included**: your dashboard shows general events, events targeting you, events you created, and your own department's planning. Viewing an employee's full schedule goes through the Équipe page (`GET /api/dashboard/:userId`) — never through your own calendar.
 
 ---
 
@@ -74,7 +96,7 @@ graph TB
 
         subgraph BackendContainer["Backend Container"]
             Express["Express REST API\n:3000"]
-            Routes["Route Modules\n(11 domains)"]
+            Routes["Route Modules\n(10 domains)"]
             Middleware["Middleware\nHelmet · CORS · JWT · Rate-limit"]
         end
 
@@ -95,7 +117,7 @@ graph TB
     Middleware --> Routes
     Routes -- "better-sqlite3\n(synchronous)" --> SQLite
     Routes -- "multer\nuploads" --> Uploads
-    Routes -- "HTTP POST\n/api/chat" --> Ollama
+    Routes -- "HTTP POST\n/api/assistant" --> Ollama
 ```
 
 ### Request Flow
@@ -117,10 +139,10 @@ sequenceDiagram
     E-->>N: { token, user }
     N-->>B: JWT token
 
-    B->>N: GET /api/taches (Bearer token)
+    B->>N: GET /api/tasks (Bearer token)
     N->>E: proxy → :3000
-    E->>E: verifyJWT middleware
-    E->>D: SELECT * FROM taches
+    E->>E: verifyJWT → loadUser (role re-read from DB)
+    E->>D: SELECT tasks WHERE department_id = user's dept
     D-->>E: rows[]
     E-->>B: JSON array
 ```
@@ -136,20 +158,25 @@ graph TD
     App --> Router["React Router v6"]
 
     Router --> Login["Login\n/login"]
-    Router --> AppLayout["AppLayout\n(sidebar + main)"]
+    Router --> AppLayout["AppLayout\n(sidebar + main)\nPrivateRoute"]
 
-    AppLayout --> Sidebar["Sidebar\n(navigation)"]
+    AppLayout --> Sidebar["Sidebar\n(4 links + Équipe for manager/admin)"]
     AppLayout --> Pages
 
-    Pages --> Dashboard["/"]
-    Pages --> Taches["/taches"]
-    Pages --> ClientsFactures["/business"]
-    Pages --> Calendrier["/calendrier"]
+    Pages --> Dashboard["/  (hub)"]
+    Pages --> Clients["/clients"]
     Pages --> CoffreFort["/documents"]
     Pages --> Assistant["/assistant"]
-    Pages --> Equipe["/equipe\n(admin only)"]
-    Pages --> MonEspace["/mon-espace\n(auth required)"]
+    Pages --> Equipe["/equipe\n(ManagerRoute)"]
+
+    Dashboard --> PostItWall["PostItWall"]
+    Dashboard --> TaskBoard["TaskBoard\n(kanban)"]
+    Dashboard --> CalendarBoard["CalendarBoard\n(react-big-calendar)"]
+
+    Equipe --> DashboardRO["Dashboard\n(targetUser → read-only,\nfed by /api/dashboard/:userId)"]
 ```
+
+The three hub components (`PostItWall`, `TaskBoard`, `CalendarBoard`) have **two modes**: interactive (they fetch their own data) or read-only (data injected via props from a single `GET /api/dashboard/:userId` call). Legacy routes `/taches`, `/calendrier`, `/mon-espace` redirect to `/`; `/business` redirects to `/clients`.
 
 ---
 
@@ -157,175 +184,35 @@ graph TD
 
 ```mermaid
 erDiagram
-    departements {
-        INTEGER id PK
-        TEXT nom UK
-        TEXT created_at
-    }
-
-    employes {
-        INTEGER id PK
-        TEXT nom
-        TEXT prenom
-        TEXT email
-        TEXT poste
-        INTEGER departement_id FK
-        REAL salaire
-        TEXT date_embauche
-        TEXT role
-        TEXT password_hash
-        TEXT created_at
-    }
-
-    tasks {
-        INTEGER id PK
-        TEXT title
-        TEXT description
-        INTEGER department_id FK
-        INTEGER created_by FK
-        TEXT status
-        TEXT priority
-        TEXT due_date
-        TEXT created_at
-        TEXT updated_at
-    }
-
-    todos {
-        INTEGER id PK
-        TEXT content
-        TEXT color
-        INTEGER created_by FK
-        TEXT status
-        TEXT done_at
-        TEXT created_at
-        TEXT updated_at
-    }
-
-    todo_assignees {
-        INTEGER todo_id PK, FK
-        INTEGER assignee_id PK, FK
-    }
-
-    clients {
-        INTEGER id PK
-        TEXT type_client
-        TEXT email
-        TEXT telephone
-        TEXT adresse
-        TEXT nom
-        TEXT prenom
-        TEXT raison_sociale
-        TEXT siret
-        TEXT tva
-        TEXT contact_nom
-        TEXT created_at
-    }
-
-    factures {
-        INTEGER id PK
-        TEXT client
-        REAL montant
-        TEXT statut
-        TEXT date_emission
-        TEXT date_echeance
-    }
-
-    evenements {
-        INTEGER id PK
-        TEXT titre
-        TEXT description
-        TEXT date_debut
-        TEXT date_fin
-        TEXT type
-        TEXT couleur
-        TEXT created_by
-        TEXT created_at
-    }
-
-    planning {
-        INTEGER id PK
-        INTEGER employe_id FK
-        TEXT date
-        TEXT heure_debut
-        TEXT heure_fin
-        TEXT projet
-    }
-
-    automations {
-        INTEGER id PK
-        TEXT nom
-        TEXT description
-        TEXT type
-        TEXT frequence
-        TEXT action
-        INTEGER actif
-        TEXT created_at
-    }
-
-    dossiers {
-        INTEGER id PK
-        TEXT nom
-        TEXT description
-        INTEGER parent_id FK
-        TEXT created_at
-    }
-
-    documents {
-        INTEGER id PK
-        TEXT nom
-        TEXT nom_fichier
-        TEXT type
-        TEXT taille
-        TEXT statut
-        TEXT description
-        INTEGER dossier_id FK
-        TEXT created_at
-    }
-
-    departements ||--o{ employes : "departement_id (ON DELETE SET NULL)"
-    departements ||--o{ tasks : "department_id (ON DELETE CASCADE)"
-    employes ||--o{ tasks : "created_by (ON DELETE SET NULL)"
-    employes ||--o{ todos : "created_by (ON DELETE SET NULL)"
-    todos ||--o{ todo_assignees : "todo_id (ON DELETE CASCADE)"
-    employes ||--o{ todo_assignees : "assignee_id (ON DELETE CASCADE)"
-    employes ||--o{ planning : "employe_id (ON DELETE CASCADE)"
-    dossiers ||--o{ dossiers : "parent_id (self-reference)"
+    departements ||--o{ employes : "SET NULL"
+    departements ||--o{ tasks : "CASCADE"
+    employes ||--o{ tasks : "created_by (SET NULL)"
+    employes ||--o{ todos : "created_by (SET NULL)"
+    todos ||--o{ todo_assignees : "CASCADE"
+    employes ||--o{ todo_assignees : "CASCADE"
+    employes ||--o{ evenements : "employe_id (CASCADE)"
+    employes ||--o{ evenements : "created_by_id (SET NULL)"
+    dossiers ||--o{ dossiers : "parent_id (tree)"
     dossiers ||--o{ documents : "dossier_id"
+    dossiers ||--o{ clients : "dossier_id (SET NULL)"
+
+    departements { int id PK  text nom UK }
+    employes { int id PK  text nom  text email  text role  int departement_id FK  text password_hash }
+    tasks { int id PK  text title  int department_id FK  int created_by FK  text status  text priority  text due_date }
+    todos { int id PK  text content  text color  int created_by FK  text status  text done_at }
+    todo_assignees { int todo_id PK,FK  int assignee_id PK,FK }
+    evenements { int id PK  text titre  text date_debut  text date_fin  text type  text couleur  int employe_id FK  int created_by_id FK }
+    clients { int id PK  text type_client  text email  text nom  text raison_sociale  int dossier_id FK }
+    dossiers { int id PK  text nom  int parent_id FK }
+    documents { int id PK  text nom  text nom_fichier  text type  text taille  int dossier_id FK }
 ```
 
-### Referential Integrity Audit
+**9 tables.** Notable design choices:
 
-Foreign keys are enforced at runtime (`PRAGMA foreign_keys = ON` on every connection).
-Plain-text reference fields were audited and migrated to real foreign keys with
-idempotent, data-preserving migrations (see `backend/models/db.js`):
-
-| Field | Decision | Rationale |
-|-------|----------|-----------|
-| `employes.departement` (TEXT) | ✅ Migrated → `departement_id` FK, **ON DELETE SET NULL** | Deleting a department must not delete its employees. Departments are created from the existing distinct values, so no data is lost. |
-| `taches.assignee` (TEXT) | ✅ Replaced by the `tasks` model | Tasks are now department-scoped (individual assignment is the todos' job). Legacy rows are moved into `tasks` under a "Général" department; the old free-text assignee is preserved as an annotation in the description. |
-| `planning.employe` (TEXT) | ✅ Migrated → `employe_id` FK, **ON DELETE CASCADE** | A schedule slot is meaningless without its employee, and GDPR-wise deleting an employee must purge their schedule. Backfilled by case-insensitive name matching; the text column is only dropped once every row is matched (retried on next boot otherwise). |
-| `tasks.department_id` | **ON DELETE CASCADE**, NOT NULL | A department task only exists through its department. |
-| `tasks.created_by` / `todos.created_by` | **ON DELETE SET NULL** | The work survives its creator's departure, but the personal reference disappears (GDPR). |
-| `todo_assignees.*` | **ON DELETE CASCADE** (both FKs) | Pure join table — rows follow the todo and the employee. |
-| `factures.client` (TEXT) | ⏸ Kept as text **on purpose** | An invoice is a legal snapshot: the client label at issuance time must stay frozen even if the client record later changes or is deleted. |
-| `evenements.created_by` (TEXT) | ⏸ Kept as text (future candidate) | Purely informative field; name-based backfill would be too unreliable to migrate without corruption risk. |
-
-### Table Reference
-
-| Table | Purpose | Key Fields |
-|-------|---------|------------|
-| `departements` | Company departments referential | `nom` (unique) |
-| `employes` | Employee directory + auth accounts | `email`, `role` (employe/manager/admin), `departement_id`, `password_hash` |
-| `tasks` | Department tasks (kanban) | `title`, `department_id`, `status` (todo/in_progress/done), `priority` (low/medium/high), `due_date` |
-| `todos` | Personal sticky notes | `content`, `color`, `created_by`, `status` (pending/done), `done_at` |
-| `todo_assignees` | Todo ↔ employee join table | `todo_id`, `assignee_id` |
-| `clients` | Client contacts (individuals + companies) | `type_client`, `email`, `nom`/`raison_sociale` |
-| `factures` | Invoices | `client`, `montant`, `statut` (en attente/payee/annulee) |
-| `evenements` | Calendar events | `titre`, `date_debut`, `date_fin`, `type`, `couleur` |
-| `planning` | Employee work schedules | `employe_id`, `date`, `heure_debut`, `heure_fin` |
-| `automations` | Automation rules (admin) | `nom`, `action`, `actif` |
-| `dossiers` | Document vault folders (tree via `parent_id`) | `nom`, `parent_id` |
-| `documents` | Uploaded file metadata | `nom`, `nom_fichier`, `type`, `taille`, `dossier_id` |
+- `evenements` is the **unified calendar**: one table carries general events (`employe_id NULL`), manager-placed planning (`type='planning'` + target employee, always green `#10b981`), and personal events (target = self, user-picked color).
+- `ON DELETE` rules are GDPR-driven: deleting an employee cascades their planning, personal events and todo assignments away, while their created tasks/todos survive **anonymized** (`created_by → NULL`).
+- Foreign keys are enforced via `PRAGMA foreign_keys = ON` (off by default in SQLite).
+- The schema evolves through **9 idempotent migrations** in `db.js` (each one inspects `PRAGMA table_info` / `sqlite_master` before acting; restarting on a migrated base is a no-op).
 
 ---
 
@@ -333,37 +220,31 @@ idempotent, data-preserving migrations (see `backend/models/db.js`):
 
 ### Backend
 
-| Technology | Version | Role |
-|-----------|---------|------|
-| **Node.js** | 18 | JavaScript runtime |
-| **Express** | 4 | HTTP server, REST API |
-| **better-sqlite3** | 9+ | Synchronous SQLite driver |
-| **jsonwebtoken** | 9 | JWT authentication |
-| **bcryptjs** | 3 | Password hashing |
-| **Multer** | 2 | Multipart file uploads |
-| **Helmet** | 8 | HTTP security headers |
-| **express-rate-limit** | 8 | Request rate limiting |
-| **dotenv** | 16 | Environment configuration |
+| Tool | Purpose |
+|------|---------|
+| Node.js 18 + Express 4 | REST API |
+| better-sqlite3 | Synchronous SQLite driver (no callbacks; ideal for a single-process app) |
+| jsonwebtoken | Stateless auth — 24 h tokens, HMAC-SHA256 |
+| bcryptjs | Password hashing (cost 10, salted) |
+| helmet / cors / express-rate-limit | Security headers · strict origin whitelist · 100 req / 15 min / IP |
+| multer | `multipart/form-data` uploads (50 MB cap, disk storage) |
 
 ### Frontend
 
-| Technology | Version | Role |
-|-----------|---------|------|
-| **React** | 18 | UI framework (SPA) |
-| **Vite** | 5 | Build tool + dev server |
-| **React Router** | 6 | Client-side routing |
-| **react-big-calendar** | 1 | Interactive calendar component |
-| **date-fns** | 4 | Date manipulation + fr locale |
-| **CSS (vanilla)** | — | Custom design system (1,300+ lines) |
+| Tool | Purpose |
+|------|---------|
+| React 18 + Vite | SPA with fast dev server and build |
+| react-router-dom v6 | Client-side routing, `PrivateRoute` / `ManagerRoute` guards |
+| react-big-calendar + date-fns | Calendar views (month/week/day), French locale |
+| Vanilla CSS (index.css) | Single global stylesheet, design tokens via CSS variables |
 
 ### Infrastructure
 
-| Technology | Role |
-|-----------|------|
-| **Docker** + **Docker Compose** | Containerization (2 containers) |
-| **Nginx (Alpine)** | Reverse proxy + static file server |
-| **Docker volumes** | SQLite persistence + file uploads |
-| **Ollama** (optional) | Local LLM for AI assistant |
+| Tool | Purpose |
+|------|---------|
+| Docker Compose | 2 containers (nginx front, node back) + 2 named volumes (SQLite, uploads) |
+| Nginx | Serves the static build, `try_files` for SPA routing, proxies `/api/` |
+| Ollama (optional, host) | Local LLM for the AI assistant |
 
 ---
 
@@ -375,8 +256,8 @@ idempotent, data-preserving migrations (see `backend/models/db.js`):
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/poloelo/Holberton-portfolio-projet.git
-cd Holberton-portfolio-projet
+git clone https://github.com/poloelo/Lexora-V2.git
+cd Lexora-V2
 
 # 2. Configure environment
 #    lexora/.env is already pre-configured for Docker
@@ -408,21 +289,15 @@ docker compose down
 docker compose down -v
 ```
 
----
-
 ### Local Development
 
 **Prerequisites:** Node.js 18+, npm.
 
 ```bash
-# Clone
-git clone https://github.com/poloelo/Holberton-portfolio-projet.git
-cd Holberton-portfolio-projet
-
 # Backend
 cd lexora/backend
 npm install
-npm run seed         # optional: demo departments, employees, tasks, todos, planning
+npm run seed         # optional: demo departments, employees, tasks, todos, events, clients
 npm run dev          # starts with node --watch (auto-reload) on :3000
 
 # Frontend (new terminal)
@@ -459,7 +334,6 @@ File location: `lexora/.env`
 | `PORT` | `3000` | Express server port |
 | `DB_PATH` | `./lexora.db` | SQLite file path |
 | `JWT_SECRET` | *(required)* | Secret key for signing JWT tokens |
-| `ADMIN_KEY` | *(required)* | Secret key for admin API routes |
 | `ALLOWED_ORIGINS` | `http://localhost` | Comma-separated CORS allowed origins |
 | `ADMIN_EMAIL` | — | Seeds an admin account on first startup |
 | `ADMIN_PASSWORD` | — | Password for the seeded admin account |
@@ -472,128 +346,122 @@ File location: `lexora/.env`
 
 ## API Reference
 
-All endpoints are prefixed with `/api`.
+All endpoints are prefixed with `/api`. **Every business route requires
+`Authorization: Bearer <token>`** — only `POST /api/auth/login` and
+`GET /api/health` are public. On each authenticated request, the middleware
+chain `verifyJWT → loadUser` re-reads role and department from the database.
 
-### Health
+### Health & Authentication (public)
 ```
 GET  /api/health         → { status: 'ok', timestamp }
-```
-
-### Authentication
-```
 POST /api/auth/login     → { token, user }   Body: { email, password }
 ```
 
-### Department Tasks — JWT required (`Authorization: Bearer <token>`)
+### Department Tasks
 
-Visibility: employees see their own department's tasks; admins see everything.
-Roles: creation/update/deletion require `manager` (own department only) or `admin`.
-Status change is open to every member of the task's department.
+Visibility: members see their own department's tasks; admins see everything.
+Creation/edit/deletion: `manager` (own department) or `admin`. Status change
+(kanban drag): any member of the task's department.
 
 ```
 GET    /api/tasks             → Task[]   Query: ?status=&priority=&department_id= (department_id: admin only)
 POST   /api/tasks             → Task     Body: { title*, department_id*, description, status, priority, due_date }
-                                         (manager|admin — manager restricted to own department)
-PUT    /api/tasks/:id         → Task     (manager of the department | admin)
-PATCH  /api/tasks/:id/status  → Task     Body: { status: 'todo'|'in_progress'|'done' }  (any department member)
-DELETE /api/tasks/:id         → { message }  (manager of the department | admin)
+PUT    /api/tasks/:id         → Task     (manager of the department | admin — including the target department on a move)
+PATCH  /api/tasks/:id/status  → Task     Body: { status: 'todo'|'in_progress'|'done' }
+DELETE /api/tasks/:id         → { message }
 ```
 
-Errors: `400` invalid field / unknown `department_id`, `401` missing token, `403` insufficient role
-or wrong department, `404` unknown task.
+### Todos (personal sticky notes)
 
-### Todos (personal sticky notes) — JWT required
-
-Visibility: the todos you created + the todos assigned to you.
-Only the creator can update/delete; creator **or** assignee can toggle done.
-Assigning to other employees requires `manager` or `admin` (regular employees
-create self-assigned notes).
+Visibility: own creations + todos assigned to you. Anyone can assign a
+post-it to any colleague. Edit/delete: creator only. Toggle: creator or
+assignee.
 
 ```
-GET    /api/todos             → Todo[]   (each with assignees: [{ id, nom }])
-POST   /api/todos             → Todo     Body: { content* (≤280), color (#rrggbb), assignee_ids: [id] }
-                                         (assignee_ids defaults to yourself)
-PUT    /api/todos/:id         → Todo     Body: { content, color, assignee_ids }  (creator only)
-PATCH  /api/todos/:id/toggle  → Todo     Toggles pending/done + done_at  (creator or assignee)
-DELETE /api/todos/:id         → { message }  (creator only)
+GET    /api/todos             → Todo[] (each with .assignees[])
+POST   /api/todos             → Todo   Body: { content* (≤280), color (#rrggbb), assignee_ids[] (default: self) }
+PUT    /api/todos/:id         → Todo   (creator only)
+PATCH  /api/todos/:id/toggle  → Todo   (creator or assignee — flips done/pending)
+DELETE /api/todos/:id         → { message } (creator only)
 ```
 
-### Departments — JWT required
+### Calendar Events (unified calendar)
+
+One table, three natures — see [Roles & Permissions](#roles--permissions).
+The dashboard calendar is **personal for every role**: general + targeting
+me + created by me + my own department's planning.
+
 ```
-GET    /api/departements      → Departement[]   (any authenticated user)
-POST   /api/departements      → Departement     Body: { nom* }   (admin)
-PUT    /api/departements/:id  → Departement     Body: { nom* }   (admin)
-DELETE /api/departements/:id  → { message }     (admin — cascades to its tasks, detaches employees)
+GET    /api/evenements        → Event[] (server-side visibility filter)
+GET    /api/evenements/:id    → Event   (404 if invisible — existence not revealed)
+POST   /api/evenements        → Event   Body: { titre*, date_debut* (ISO 8601), date_fin, type, couleur, employe_id }
+                                        type 'planning' → manager of target's department only, green color forced
+PUT    /api/evenements/:id    → Event   (creator | department manager for planning | admin; rights re-checked on final values)
+DELETE /api/evenements/:id    → { message } (same rights as PUT)
 ```
 
-### Clients
-```
-GET    /api/clients      → Client[]
-GET    /api/clients/:id  → Client
-POST   /api/clients      → Client   Body: { email*, nom* | raison_sociale*, type_client, ... }
-PUT    /api/clients/:id  → Client
-DELETE /api/clients/:id  → { message }
-```
+### Dashboard consultation (read-only)
 
-### Invoices
 ```
-GET    /api/factures     → Invoice[]
-POST   /api/factures     → Invoice  Body: { client*, montant*, statut, date_emission, date_echeance }
-PUT    /api/factures/:id → Invoice
-DELETE /api/factures/:id → { success: true }
+GET /api/dashboard/:userId    → { user, todos, tasks, evenements }
 ```
+Guard: **manager of the target's department, or admin — otherwise 403.**
+Re-aggregates the exact queries of the three domains "as if" requested by the
+target employee. Strictly read-only: no write route exists "on behalf of"
+anyone.
 
-### Calendar Events
-```
-GET    /api/evenements      → Event[]
-GET    /api/evenements/:id  → Event
-POST   /api/evenements      → Event  Body: { titre*, date_debut*, date_fin, type, description }
-PUT    /api/evenements/:id  → Event
-DELETE /api/evenements/:id  → { success: true }
-```
+### Clients (CRM + automatic vault folder)
 
-### Planning (Staff Schedules)
 ```
-GET    /api/planning      → Schedule[]  (each with employe_nom from the employes join)
-POST   /api/planning      → Schedule  Body: { employe_id*, date*, heure_debut*, heure_fin*, projet }
-PUT    /api/planning/:id  → Schedule
-DELETE /api/planning/:id  → { success: true }
+GET    /api/clients           → Client[]
+GET    /api/clients/:id       → Client
+POST   /api/clients           → Client  Body: { type_client, email*, nom*|raison_sociale*, telephone, adresse, siret, tva, contact_nom }
+                                        Creates the client AND its sub-folder under Clients/ in one transaction
+PUT    /api/clients/:id       → Client  (the folder is never auto-renamed)
+DELETE /api/clients/:id       → 409 + { requiresConfirmation, dossier_id, dossier_nom } if a folder is linked and no choice given
+DELETE /api/clients/:id?deleteDossier=true|false
+                              → { message }  true: deletes folder + contents; false: keeps folder, detached
 ```
 
 ### Document Vault
-```
-GET    /api/documents                → Document[]  (query: ?dossier_id=)
-POST   /api/documents/upload         → Document    Body: multipart/form-data { file, dossier_id }
-GET    /api/documents/:id/download   → File stream
-DELETE /api/documents/:id            → { success: true }
 
-GET    /api/documents/dossiers       → Folder[]
-POST   /api/documents/dossiers       → Folder  Body: { nom*, description, parent_id }
-DELETE /api/documents/dossiers/:id   → { success: true }  (recursive delete)
 ```
-
-### Employees — Admin (requires `Authorization: Bearer <token>` + `admin` role)
-```
-GET    /api/employes           → Employee[]  (with departement_nom)
-GET    /api/employes/selector  → [{ id, nom }]  (manager|admin — minimal directory for assignee pickers)
-GET    /api/employes/:id       → Employee
-POST   /api/employes           → Employee  Body: { nom*, email*, password*, prenom, poste, departement_id, role }
-PUT    /api/employes/:id       → Employee
-DELETE /api/employes/:id       → { success: true }  (cascades: planning + todo assignments purged,
-                                                     created tasks/todos keep living with created_by = NULL)
+GET    /api/documents/dossiers      → Folder[]
+POST   /api/documents/dossiers      → Folder   Body: { nom*, description, parent_id }
+DELETE /api/documents/dossiers/:id  → { message } (recursive: files on disk + DB rows + sub-folders)
+GET    /api/documents               → Document[]  Query: ?dossier_id= (or 'null' for root)
+POST   /api/documents/upload        → Document  multipart/form-data: file* (≤50 MB), dossier_id, description
+GET    /api/documents/:id/download  → file (original name; requires the JWT header — the frontend fetches a blob)
+DELETE /api/documents/:id           → { message } (removes the physical file too)
 ```
 
-### Automations — Admin (requires `Authorization: Bearer <token>`)
+### Employees
+
 ```
-GET    /api/automations      → Automation[]
-POST   /api/automations      → Automation  Body: { nom*, action* }
-PUT    /api/automations/:id  → Automation
-DELETE /api/automations/:id  → { success: true }
+GET  /api/employes/selector      → [{ id, nom }]                (any authenticated user — assignment pickers)
+GET  /api/employes/equipe        → [{ id, nom, poste, departement_nom }]
+                                   (manager: own department w/o self; admin: everyone w/o self)
+GET  /api/employes               → Employee[]  (admin — password_hash never returned)
+GET  /api/employes/:id           → Employee    (admin)
+POST /api/employes               → Employee    (admin) Body: { nom*, email*, password*, prenom, poste, departement_id, salaire, date_embauche, role }
+PUT  /api/employes/:id           → Employee    (admin)
+PUT  /api/employes/:id/password  → { message } (admin)
+DELETE /api/employes/:id         → { message } (admin — GDPR cascades, see db.js)
+```
+
+### Departments
+
+```
+GET    /api/departements      → [{ id, nom }]  (any authenticated user)
+POST   /api/departements      → Department     (admin)
+PUT    /api/departements/:id  → Department     (admin)
+DELETE /api/departements/:id  → { message }    (admin — tasks CASCADE, employees SET NULL)
 ```
 
 ### AI Assistant
+
 ```
-POST /api/assistant   Body: { prompt* }   → { response }
+POST /api/assistant           → { response }   Body: { prompt* }  (proxied to local Ollama)
 ```
 
 ---
@@ -601,84 +469,52 @@ POST /api/assistant   Body: { prompt* }   → { response }
 ## Project Structure
 
 ```
-Holberton-portfolio-projet/
-├── .env.example                    # Environment template (copy to lexora/.env)
-├── README.md                       # This file
-├── QA_REPORT.md                    # Security & integration QA report
-├── docker-compose.yml              # Docker orchestration (backend + frontend)
-├── Dockerfile.backend              # Node.js 18 slim image
-├── Dockerfile.frontend             # Multi-stage: Vite build → Nginx serve
-├── nginx.conf                      # Reverse proxy + SPA routing config
+Lexora-V2/
+├── docker-compose.yml            # 2 services + 2 volumes (sqlite-data, uploads-data)
+├── Dockerfile.backend            # Node 18 + C++ toolchain (better-sqlite3 native build)
+├── Dockerfile.frontend           # Multi-stage: vite build → nginx:alpine
+├── nginx.conf                    # SPA try_files + /api/ reverse proxy
+├── REVISION_SOUTENANCE.md        # Oral defense study guide (French)
+├── docs/                         # Holberton deliverables (sprint plans, QA, backend guide)
+│
 └── lexora/
-    ├── .env                        # Environment variables (not committed)
-    ├── .gitignore
-    ├── package.json                # Shared workspace dependencies
     ├── backend/
-    │   ├── env.js                  # Loads dotenv before any other module
-    │   ├── index.js                # Express entry point — mounts all routes
-    │   ├── package.json
-    │   ├── middleware/
-    │   │   └── auth.js             # JWT verification + loadUser + requireRole
-    │   ├── models/
-    │   │   └── db.js               # SQLite init, schema, FK migrations, admin seed
-    │   ├── scripts/
-    │   │   └── seed.js             # Idempotent demo data (npm run seed)
-    │   ├── routes/                 # One file per business domain
-    │   │   ├── auth.js             # Login → JWT
-    │   │   ├── tasks.js            # Department task CRUD + status (JWT, roles)
-    │   │   ├── todos.js            # Personal sticky notes + assignees (JWT)
-    │   │   ├── departements.js     # Department referential (JWT, write = admin)
-    │   │   ├── clients.js          # Client contact CRUD
-    │   │   ├── factures.js         # Invoice CRUD
-    │   │   ├── evenements.js       # Calendar event CRUD
-    │   │   ├── planning.js         # Staff schedule CRUD
-    │   │   ├── employes.js         # Employee CRUD (admin, JWT required)
-    │   │   ├── automations.js      # Automation rule CRUD (admin, JWT required)
-    │   │   ├── documents.js        # File vault: folders + upload/download
-    │   │   └── assistant.js        # Proxy to Ollama LLM
-    │   ├── services/
-    │   │   └── ollamaService.js    # HTTP client for Ollama
-    │   └── uploads/                # Uploaded files (gitignored, Docker volume)
+    │   ├── index.js              # Entry point: global middlewares + 10 routers
+    │   ├── env.js                # dotenv loader (imported first)
+    │   ├── middleware/auth.js    # verifyJWT, loadUser, requireRole
+    │   ├── models/db.js          # Schema + 9 idempotent migrations + admin seed
+    │   ├── services/ollamaService.js
+    │   ├── routes/               # 1 file = 1 domain (route + controller)
+    │   │   ├── auth.js           ├── tasks.js        ├── todos.js
+    │   │   ├── departements.js   ├── employes.js     ├── clients.js
+    │   │   ├── evenements.js     ├── documents.js    ├── assistant.js
+    │   │   └── dashboard.js      # read-only employee dashboard (manager/admin)
+    │   ├── scripts/seed.js       # Idempotent demo data
+    │   └── uploads/              # Physical files (Docker volume in prod)
+    │
     └── frontend/
-        ├── index.html
-        ├── vite.config.js          # Vite build config + /api/* dev proxy
-        ├── package.json
         └── src/
-            ├── main.jsx            # ReactDOM.createRoot + BrowserRouter
-            ├── App.jsx             # Sidebar + route definitions + guards
-            ├── index.css           # Complete design system (1,300+ lines)
-            ├── contexts/
-            │   ├── AuthContext.jsx  # JWT state (login, logout, authHeaders)
-            │   └── ToastContext.jsx # Global toast notifications
-            ├── components/
-            │   ├── Tabs.jsx         # Reusable tabbed panel component
-            │   └── PostItWall.jsx   # Sticky-note wall (todos) with assignees
-            └── pages/
-                ├── Login.jsx        # Authentication page (full-screen)
-                ├── Dashboard.jsx    # KPI overview with animated counters
-                ├── Taches.jsx       # Department task kanban (drag & drop)
-                ├── ClientsFactures.jsx  # CRM + invoicing (tabbed)
-                ├── Calendrier.jsx   # Interactive calendar (react-big-calendar)
-                ├── Coffre_fort.jsx  # Document vault with folder navigation
-                ├── Assistant.jsx    # AI chat interface
-                ├── Equipe.jsx       # Admin panel (employees, planning, automations)
-                └── MonEspace.jsx    # Employee personal space + schedule view
+            ├── main.jsx / App.jsx / index.css
+            ├── contexts/         # AuthContext (JWT), ToastContext
+            ├── components/       # PostItWall, TaskBoard, CalendarBoard
+            │                     #  (each: interactive OR read-only via props)
+            └── pages/            # Dashboard (hub), Clients, Coffre_fort,
+                                  #  Assistant, Equipe, Login
 ```
 
 ---
 
 ## Security
 
-| Layer | Mechanism |
-|-------|-----------|
-| **HTTP Headers** | Helmet.js — sets 14+ security headers (CSP, HSTS, X-Frame-Options, etc.) |
-| **CORS** | Strict allowlist via `ALLOWED_ORIGINS` env var |
-| **Rate Limiting** | 100 requests / 15 min per IP on all `/api/*` routes |
-| **Authentication** | JWT (HS256, 24h expiry) via `Authorization: Bearer` header |
-| **Password Storage** | bcryptjs with 10 salt rounds |
-| **Admin Routes** | JWT required on `/api/employes` and `/api/automations` |
-| **File Uploads** | Multer — 50 MB limit, stored with timestamp-prefixed names |
-| **Input Validation** | Required fields validated in each route before DB write |
+- **JWT (24 h)** signed HMAC-SHA256; the payload only *identifies* — on every request `loadUser` re-reads role/department from the DB, so authorization never trusts the token
+- **bcrypt** (cost 10) password hashing; hashes never leave the server
+- **All business routes behind JWT** — only login and health are public
+- **Prepared statements everywhere** (`?` placeholders) — no SQL injection surface
+- **helmet** security headers, **strict CORS** whitelist, **rate-limit** 100 req/15 min/IP
+- **Input validation**: enum whitelists (status, priority, roles, event types), regex checks (dates, hex colors), FK existence checks, 280-char todo cap, 50 MB upload cap
+- **GDPR-aware deletes**: employee deletion cascades personal data (planning, assignments, personal events) and anonymizes authored content (`created_by → NULL`)
+- **Data minimization**: `/api/employes/selector` exposes only `{id, nom}`; `password_hash` is never selected into a response; the read-only dashboard returns a minimal user card (no email/salary)
+- **Read-only by construction**: the manager consultation view has no write API at all — not just hidden buttons
 
 ---
 

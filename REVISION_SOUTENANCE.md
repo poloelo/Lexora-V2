@@ -194,6 +194,113 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 
 > **À retenir** : toute l'API métier exige un JWT (`router.use(verifyJWT, loadUser)` en tête de chaque router). Seuls `POST /api/auth/login` et `GET /api/health` sont publics — il faut bien pouvoir se connecter, et la sonde de santé sert au monitoring.
 
+### 3.1 bis — Les routes en détail, domaine par domaine
+
+> Cette section est faite pour l'oral : pour chaque route, tu dois pouvoir dire
+> **qui a le droit, ce qui entre, ce qui se passe, ce qui sort**. Les erreurs
+> suivent partout la même convention : 400 = requête mal formée, 401 = pas de
+> token valide, 403 = authentifié mais pas le droit, 404 = introuvable (ou
+> volontairement caché), 409 = conflit qui demande une décision, 500 = erreur
+> serveur générique.
+
+#### 🔑 `POST /api/auth/login` (public)
+
+- **Entre** : `{ email, password }`.
+- **Se passe** : cherche l'employé par email → si absent **ou sans hash** → 401 « Identifiants incorrects » (même message dans tous les cas : on n'aide pas à énumérer les comptes) → `bcrypt.compareSync` → `jwt.sign({ id, email, role, nom, prenom }, JWT_SECRET, { expiresIn: '24h' })`.
+- **Sort** : `{ token, user }`. Le front stocke les deux en localStorage (`lexora_jwt`, `lexora_user`).
+- **À dire** : le rôle dans le token ne sert qu'à l'affichage — le serveur relit le vrai rôle en base à chaque requête (`loadUser`).
+
+#### ✅ `/api/tasks` — kanban de département
+
+| Route | Qui | Ce qu'elle fait |
+|---|---|---|
+| `GET /` | tout membre authentifié | Admin : toutes les tâches (filtre `?department_id=` optionnel) ; sinon : **forcé** sur `req.user.departement_id` (sans département → `[]`). Filtres `?status=`, `?priority=`. Jointures pour renvoyer `department_nom` et `created_by_nom` |
+| `POST /` | manager (son dept) / admin | Valide titre + department_id (existence en base), enums statut/priorité, date `YYYY-MM-DD` → `canManage` → INSERT avec `created_by = req.user.id` → 201 + tâche complète |
+| `PUT /:id` | manager (son dept) / admin | Charge la tâche, `canManage` sur le département actuel **et sur le département cible** si on la déplace, valeurs manquantes conservées (`?? task.champ`) |
+| `PATCH /:id/status` | **tout membre du département** | Volontairement plus permissif que le CRUD : le kanban est interactif pour toute l'équipe. Valide l'enum, met à jour `updated_at` |
+| `DELETE /:id` | manager (son dept) / admin | `canManage` puis DELETE |
+
+Exemple de réponse `GET /api/tasks` :
+```json
+[{ "id": 4, "title": "Migrer le serveur", "status": "in_progress",
+   "priority": "high", "due_date": "2026-07-18", "department_id": 2,
+   "department_nom": "Technique", "created_by_nom": "Antoine Petit" }]
+```
+
+#### 📌 `/api/todos` — post-its personnels
+
+| Route | Qui | Ce qu'elle fait |
+|---|---|---|
+| `GET /` | authentifié | `getTodosOfUser(req.user.id)` : mes créations + ce qu'on m'a assigné (`SELECT DISTINCT` + LEFT JOIN todo_assignees), chaque todo avec sa liste `assignees[]` (id + nom seulement) |
+| `POST /` | authentifié | Valide contenu (≤ 280), couleur `#rrggbb`, existence des assignés. Sans `assignee_ids` → auto-assigné. INSERT puis `replaceAssignees` (**transaction** DELETE+INSERT : tout ou rien) |
+| `PUT /:id` | **créateur seul** | Modifie contenu/couleur/assignés |
+| `PATCH /:id/toggle` | créateur **ou** assigné | Bascule pending↔done, remplit/vide `done_at` |
+| `DELETE /:id` | créateur seul | Supprime (les assignations suivent en CASCADE) |
+
+**À dire** : l'assignation est ouverte à tout le monde (esprit « mur partagé ») ; c'est un choix produit assumé, la restriction manager/admin d'origine a été levée.
+
+#### 📅 `/api/evenements` — calendrier unifié
+
+Le point le plus subtil du projet. Une table, trois natures (voir §4.5 bis), et **deux niveaux de règles distincts** :
+
+1. **Affichage** (`GET /`) : clause `VISIBILITY_WHERE`, identique pour tous les rôles, admin compris → général + me cible + créé par moi + planning de mon département. *Mon* calendrier est personnel ; celui des employés se consulte via `/api/dashboard/:userId`.
+2. **Accès unitaire** (`GET /:id`, `PUT`, `DELETE`) : `canSee`, plus large → admin partout, manager sur son département. L'admin garde donc tous ses droits d'écriture même sur ce qui n'apparaît pas dans sa vue.
+
+| Route | Qui | Ce qu'elle fait |
+|---|---|---|
+| `GET /` | authentifié | `getEventsVisibleBy(req.user)` — requête SQL à paramètres nommés (`@me`, `@dep`) |
+| `GET /:id` | selon `canSee` | **404 si invisible** (pas 403 : on ne révèle pas l'existence) |
+| `POST /` | selon le type | `planning` → `employe_id` requis + `managesTarget` (manager du dept de la cible / admin) + **vert #10b981 imposé** ; autre type ciblant quelqu'un → soi-même seulement (sauf manager/admin du dept) ; général → tout le monde. `created_by_id = req.user.id` |
+| `PUT /:id` | `canManageEvent` | Droits revérifiés sur les **valeurs finales** (type et cible après modification) : impossible de transformer son rappel perso en planning d'autrui |
+| `DELETE /:id` | `canManageEvent` | Créateur (perso/général), manager du dept (planning), admin |
+
+Exemple `POST` planning par un manager :
+```json
+→ { "titre": "Clôture Q3", "date_debut": "2026-07-14T09:00:00",
+    "date_fin": "2026-07-14T17:00:00", "type": "planning", "employe_id": 3 }
+← 201 { ..., "couleur": "#10b981", "employe_nom": "Sophie Martin",
+        "created_by_nom": "Marie Dupont" }
+```
+
+#### 👁 `GET /api/dashboard/:userId` — consultation lecture seule
+
+- **Qui** : manager du département de la cible, ou admin — sinon **403** (cible inexistante : 404).
+- **Se passe** : charge la fiche minimale de la cible, puis réagrège les trois requêtes des domaines d'origine, calculées « comme si » on était la cible : `getTodosOfUser(target.id)`, `getTasksOfDepartment(target.departement_id)`, `getEventsVisibleBy(target)`.
+- **Sort** : `{ user: {id, nom, prenom, poste, departement_nom}, todos, tasks, evenements }`.
+- **À dire absolument** : ① une seule source de vérité — la route **importe** les fonctions des routers d'origine au lieu de dupliquer le SQL ; ② la lecture seule est structurelle : **aucune route d'écriture « pour le compte de » n'existe**, ce n'est pas juste des boutons cachés côté front.
+
+#### 👥 `/api/clients` — CRM + dossier automatique
+
+| Route | Qui | Ce qu'elle fait |
+|---|---|---|
+| `GET /`, `GET /:id` | authentifié | Liste / fiche |
+| `POST /` | authentifié | Valide email + (nom si particulier, raison_sociale si entreprise) → **transaction** : INSERT client + INSERT sous-dossier nommé d'après le client sous le dossier racine fixe `Clients/` + liaison `dossier_id`. Tout ou rien |
+| `PUT /:id` | authentifié | Modifie la fiche ; le dossier n'est **jamais renommé automatiquement** (choix assumé, renommage manuel possible dans le Coffre-fort) |
+| `DELETE /:id` | authentifié | Sans paramètre + dossier lié → **409** `{ requiresConfirmation: true, dossier_id, dossier_nom }` → le front affiche la modale à 2 choix → deuxième appel avec `?deleteDossier=true` (dossier + contenu supprimés récursivement) ou `false` (dossier conservé, détaché) |
+
+**À dire** : le 409 est un vrai usage du code HTTP « conflit » — le serveur refuse de décider à la place de l'utilisateur du sort de documents potentiellement importants.
+
+#### 📁 `/api/documents` — coffre-fort
+
+| Route | Ce qu'elle fait |
+|---|---|
+| `GET /dossiers` · `POST /dossiers` · `DELETE /dossiers/:id` | Arborescence (self-reference `parent_id`) ; la suppression est **récursive** : fichiers physiques d'abord (`fs.unlinkSync`), puis lignes en base, puis sous-dossiers, puis le dossier |
+| `GET /?dossier_id=` | Documents d'un dossier (`'null'` = racine, absent = tous) |
+| `POST /upload` | Multer `diskStorage` : nom disque = `timestamp-nomOriginal` (jamais d'écrasement), correction d'encodage latin1→utf8 des accents, limite 50 MB, détection du type par extension, taille affichable calculée |
+| `GET /:id/download` | `res.download(chemin, nomOriginal)` — protégé JWT, donc le front ne peut plus utiliser un simple `<a href>` : il **fetch un blob** avec le header puis déclenche le téléchargement |
+| `DELETE /:id` | Supprime le fichier physique + la ligne |
+
+#### 🧑‍💼 `/api/employes` et `/api/departements`
+
+- `GET /employes/selector` (**tous les authentifiés**) : annuaire minimal `{id, nom}` pour les sélecteurs d'assignation — minimisation des données, c'est ce qui permet de l'ouvrir à tous.
+- `GET /employes/equipe` (**manager/admin**) : les dashboards consultables — manager : son département sans lui ; admin : tout le monde sans lui.
+- Le reste d'`/employes` est **admin-only** (`requireRole('admin')`) : CRUD complet, `PUT /:id/password` pour réinitialiser, `password_hash` jamais présent dans une réponse (SELECT à colonnes explicites).
+- `/departements` : lecture pour tous les authentifiés (les sélecteurs de l'UI en ont besoin), écriture admin ; à la suppression, tâches en CASCADE et employés détachés (SET NULL).
+
+#### 🤖 `POST /api/assistant`
+
+Valide `prompt`, délègue à `ollamaService.chat()` (fetch natif vers `OLLAMA_URL/api/generate`, `stream: false` → réponse complète en un JSON). Ollama éteint → l'erreur remonte en 500 avec le détail et le front l'affiche **dans le chat** au lieu de planter. Découplage : remplacer Ollama par OpenAI ne toucherait que le service.
+
 ### 3.2 Côté frontend : Page → Composants → Appels API → State
 
 | Page (route) | Composants utilisés | Appels API (fetch) | Hooks / state clés |
@@ -486,7 +593,7 @@ Points à savoir dire :
 
 - **`Dockerfile.backend`** : `node:18-bullseye-slim` + `python3/make/g++` car **better-sqlite3 est un module natif C++** qui doit être compilé pour l'architecture du conteneur (`npm rebuild better-sqlite3`).
 - **`Dockerfile.frontend`** : **build multi-stage** — stage 1 : Node exécute `vite build` → `/dist` ; stage 2 : image `nginx:alpine` qui ne contient **que** les fichiers statiques (image finale minuscule, sans Node ni node_modules).
-- **`nginx.conf`** : `try_files $uri $uri/ /index.html` → toute URL inconnue renvoie `index.html`, indispensable pour une **SPA avec BrowserRouter** (sinon F5 sur `/taches` donnerait un 404) ; `location /api/` → `proxy_pass http://backend:3000` (résolution DNS interne Docker par nom de service).
+- **`nginx.conf`** : `try_files $uri $uri/ /index.html` → toute URL inconnue renvoie `index.html`, indispensable pour une **SPA avec BrowserRouter** (sinon F5 sur `/clients` donnerait un 404) ; `location /api/` → `proxy_pass http://backend:3000` (résolution DNS interne Docker par nom de service).
 - **`docker-compose.yml`** : 2 volumes nommés — `sqlite-data` (la base) et `uploads-data` (les fichiers). Sans le volume uploads, les fichiers disparaissaient au redémarrage alors que leurs métadonnées restaient en base (bug corrigé, bon exemple à raconter). `extra_hosts: host.docker.internal:host-gateway` permet au conteneur d'atteindre Ollama qui tourne **sur la machine hôte**.
 
 ---
@@ -540,9 +647,22 @@ Trois pages (Dashboard, Tâches, Calendrier) affichaient l'espace de travail d'u
 
 ---
 
-## 9. CHIFFRES À RETENIR
+## 9. SCÉNARIO DE DÉMO — fil rouge pour la soutenance
 
-- **10 routers** Express, **~28 endpoints**, montés sous `/api/*`
+Un parcours de 5 minutes qui traverse toutes les fonctionnalités, avec les comptes du seed (`npm run seed`, mot de passe commun `demo1234`) :
+
+1. **Login employé** (`s.martin@lexora.fr`) → arrivée sur le **hub** : post-its, kanban Finance, calendrier. Montrer : créer un post-it et l'assigner à un collègue, déplacer une carte kanban (drag & drop → PATCH optimiste), créer un **événement personnel** rose « RDV dentiste » (case personnel cochée).
+2. **Login manager** (`m.dupont@lexora.fr`, même département) → sur SON dashboard : il voit le planning Finance mais **pas** le rappel dentiste de Sophie. Montrer : créer une tâche de département (« + Nouvelle tâche », réservé manager), poser un créneau **Planning (équipe)** vert sur Sophie depuis le calendrier.
+3. Toujours en manager → **Équipe** → « Voir le dashboard » de Sophie : bandeau lecture seule, ses post-its, le kanban, ET son rappel dentiste (visible ici, et seulement ici). Montrer qu'aucun bouton d'action n'existe — et rappeler que côté serveur, **aucune route d'écriture « pour le compte de » n'existe**.
+4. **Login admin** (`admin@lexora.fr`) → son calendrier est personnel (pas de fouillis de toute l'entreprise) ; page Équipe → répertoire (créer un employé) + tous les dashboards.
+5. **Clients** : créer un client → montrer le sous-dossier auto dans le Coffre-fort (`Clients/<nom>`), uploader un PDF dedans, puis supprimer le client → la modale à 2 choix (409 côté API).
+6. Finir sur un `curl` sans token → 401 : « tout ce que vous venez de voir est inaccessible sans JWT ».
+
+---
+
+## 10. CHIFFRES À RETENIR
+
+- **10 routers** Express, **43 endpoints**, montés sous `/api/*` (dont 2 publics : login, health)
 - **9 tables** SQLite, **9 migrations** idempotentes
 - **6 pages** React (le Dashboard est le hub : post-its + kanban + calendrier), **2 contexts** (Auth, Toast), **3 composants** partagés à double mode interactif/lecture seule (PostItWall, TaskBoard, CalendarBoard)
 - JWT : **24 h**, bcrypt cost **10**, rate-limit **100 req/15 min/IP**, upload max **50 MB**, todo max **280 caractères**
