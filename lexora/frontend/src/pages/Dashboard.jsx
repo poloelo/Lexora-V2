@@ -104,11 +104,12 @@ export default function Dashboard() {
 
   useEffect(() => {
     Promise.all([
-      // /api/tasks est protégé par JWT : sans connexion, les stats tombent à zéro
       fetch('/api/tasks', { headers: authHeaders })
         .then(r => (r.ok ? r.json() : [])).catch(() => []),
-      fetch('/api/factures').then(r => r.json()).catch(() => []),
-      fetch('/api/planning').then(r => r.json()).catch(() => []),
+      fetch('/api/factures', { headers: authHeaders })
+        .then(r => (r.ok ? r.json() : [])).catch(() => []),
+      fetch('/api/planning', { headers: authHeaders })
+        .then(r => (r.ok ? r.json() : [])).catch(() => []),
     ]).then(([t, f, p]) => {
       setTaches(Array.isArray(t) ? t : []);
       setFactures(Array.isArray(f) ? f : []);

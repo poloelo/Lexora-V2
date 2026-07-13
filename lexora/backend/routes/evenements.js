@@ -10,8 +10,12 @@
 
 import { Router } from 'express';
 import db from '../models/db.js';
+import { verifyJWT, loadUser } from '../middleware/auth.js';
 
 const router = Router();
+
+// Toutes les routes événements exigent un utilisateur authentifié
+router.use(verifyJWT, loadUser);
 
 // GET — Tous les événements, triés par date de début croissante (le plus tôt en premier).
 // On utilise ASC pour le calendrier : il est naturel d'afficher les événements

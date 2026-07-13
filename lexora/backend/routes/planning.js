@@ -15,8 +15,12 @@
 
 import { Router } from 'express';
 import db from '../models/db.js';
+import { verifyJWT, loadUser } from '../middleware/auth.js';
 
 const router = Router();
+
+// Toutes les routes planning exigent un utilisateur authentifié
+router.use(verifyJWT, loadUser);
 
 // SELECT commun : le créneau + nom affichable de l'employé.
 // LEFT JOIN : les bases partiellement migrées peuvent contenir des créneaux

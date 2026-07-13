@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from 'react';
 import { useToast } from '../contexts/ToastContext.jsx';
+import { useAuth } from '../contexts/AuthContext.jsx';
 import Tabs from '../components/Tabs.jsx';
 
 // ── Helpers : formatage ────────────────────────────────────
@@ -41,9 +42,10 @@ function Clients() {
   const [saving, setSaving]   = useState(false);
   const [search, setSearch]   = useState('');
   const toast = useToast();
+  const { authHeaders } = useAuth();
 
   const load = () =>
-    fetch('/api/clients')
+    fetch('/api/clients', { headers: authHeaders })
       .then(r => r.json())
       .then(data => { setClients(Array.isArray(data) ? data : []); setLoading(false); })
       .catch(() => { toast('Impossible de charger les clients', 'error'); setLoading(false); });
@@ -59,7 +61,7 @@ function Clients() {
     try {
       await fetch('/api/clients', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         // On envoie aussi telephone si renseigné, le reste est optionnel
         body: JSON.stringify({ nom: form.nom, email: form.email, telephone: form.telephone }),
       });
@@ -75,7 +77,7 @@ function Clients() {
 
   const supprimer = async id => {
     try {
-      await fetch(`/api/clients/${id}`, { method: 'DELETE' });
+      await fetch(`/api/clients/${id}`, { method: 'DELETE', headers: authHeaders });
       // On retire directement de l'état local, pas besoin de recharger depuis l'API
       setClients(prev => prev.filter(c => c.id !== id));
       toast('Client supprimé');
@@ -155,9 +157,10 @@ function Factures() {
   const [saving, setSaving]     = useState(false);
   const [search, setSearch]     = useState('');
   const toast = useToast();
+  const { authHeaders } = useAuth();
 
   const load = () =>
-    fetch('/api/factures')
+    fetch('/api/factures', { headers: authHeaders })
       .then(r => r.json())
       .then(data => { setFactures(Array.isArray(data) ? data : []); setLoading(false); })
       .catch(() => { toast('Impossible de charger les factures', 'error'); setLoading(false); });
@@ -172,7 +175,7 @@ function Factures() {
     try {
       await fetch('/api/factures', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         // parseFloat convertit la chaîne "150.50" en nombre 150.5 pour le backend
         body: JSON.stringify({ ...form, montant: parseFloat(form.montant) }),
       });
@@ -188,7 +191,7 @@ function Factures() {
 
   const handleDelete = async id => {
     try {
-      await fetch(`/api/factures/${id}`, { method: 'DELETE' });
+      await fetch(`/api/factures/${id}`, { method: 'DELETE', headers: authHeaders });
       setFactures(prev => prev.filter(f => f.id !== id));
       toast('Facture supprimée');
     } catch {
@@ -200,7 +203,7 @@ function Factures() {
     try {
       const res = await fetch(`/api/factures/${facture.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ ...facture, statut: newStatut }),
       });
       if (!res.ok) throw new Error();

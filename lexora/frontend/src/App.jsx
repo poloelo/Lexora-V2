@@ -11,7 +11,14 @@ import Assistant       from './pages/Assistant.jsx';
 import Equipe          from './pages/Equipe.jsx';
 import Login           from './pages/Login.jsx';
 
-// ── Garde de route ────────────────────────────────────────
+// ── Gardes de route ───────────────────────────────────────
+// Toute l'API exige désormais un JWT : l'application entière est derrière
+// le login (hors page /login elle-même).
+function PrivateRoute({ children }) {
+  const { isAuthenticated } = useAuth();
+  return isAuthenticated ? children : <Navigate to="/login" replace />;
+}
+
 function AdminRoute({ children }) {
   const { isAuthenticated, user } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
@@ -131,8 +138,8 @@ export default function App() {
         <Routes>
           {/* Page de login — plein écran, sans sidebar */}
           <Route path="/login" element={<Login />} />
-          {/* Toutes les autres pages — avec sidebar */}
-          <Route path="/*" element={<AppLayout />} />
+          {/* Toutes les autres pages — avec sidebar, connexion requise */}
+          <Route path="/*" element={<PrivateRoute><AppLayout /></PrivateRoute>} />
         </Routes>
       </ToastProvider>
     </AuthProvider>
