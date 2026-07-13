@@ -8,8 +8,8 @@
  * Visibilité   : ses propres créations + les todos qui nous sont assignés.
  * Modification : créateur uniquement (contenu, couleur, assignés, suppression).
  * Toggle       : créateur OU assigné peuvent marquer fait / à faire.
- * Assignation  : un employé simple ne peut s'assigner qu'à lui-même ;
- *                manager et admin peuvent assigner à n'importe qui.
+ * Assignation  : tout utilisateur authentifié peut assigner un post-it à
+ *                n'importe quel collègue (esprit "mur de post-its" partagé).
  */
 
 import { Router } from 'express';
@@ -66,8 +66,6 @@ function validateFields({ content, color, assignee_ids }) {
   return null;
 }
 
-const canAssignOthers = req => ['manager', 'admin'].includes(req.user.role);
-
 const replaceAssignees = db.transaction((todoId, assigneeIds) => {
   db.prepare('DELETE FROM todo_assignees WHERE todo_id = ?').run(todoId);
   const insert = db.prepare('INSERT OR IGNORE INTO todo_assignees (todo_id, assignee_id) VALUES (?, ?)');
@@ -90,7 +88,7 @@ router.get('/', (req, res) => {
   }
 });
 
-// POST — Créer un todo (tout utilisateur ; assignation à autrui = manager/admin)
+// POST — Créer un todo (tout utilisateur ; assignation libre à tout collègue)
 router.post('/', (req, res) => {
   try {
     const { content, color } = req.body;
@@ -99,9 +97,6 @@ router.post('/', (req, res) => {
 
     const invalid = validateFields({ content, color, assignee_ids });
     if (invalid) return res.status(400).json({ error: invalid });
-    if (!canAssignOthers(req) && assignee_ids.some(id => id !== req.user.id)) {
-      return res.status(403).json({ error: 'Seuls les managers et admins peuvent assigner un todo à d\'autres employés' });
-    }
 
     const result = db.prepare(
       'INSERT INTO todos (content, color, created_by) VALUES (?, ?, ?)'
@@ -126,9 +121,6 @@ router.put('/:id', (req, res) => {
     const { content, color, assignee_ids } = req.body;
     const invalid = validateFields({ content, color, assignee_ids });
     if (invalid) return res.status(400).json({ error: invalid });
-    if (assignee_ids !== undefined && !canAssignOthers(req) && assignee_ids.some(id => id !== req.user.id)) {
-      return res.status(403).json({ error: 'Seuls les managers et admins peuvent assigner un todo à d\'autres employés' });
-    }
 
     db.prepare(`
       UPDATE todos SET content = ?, color = ?, updated_at = datetime('now') WHERE id = ?

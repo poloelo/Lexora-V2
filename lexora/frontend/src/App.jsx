@@ -9,19 +9,13 @@ import Calendrier      from './pages/Calendrier.jsx';
 import CoffreFort      from './pages/Coffre_fort.jsx';
 import Assistant       from './pages/Assistant.jsx';
 import Equipe          from './pages/Equipe.jsx';
-import MonEspace       from './pages/MonEspace.jsx';
 import Login           from './pages/Login.jsx';
 
-// ── Gardes de route ───────────────────────────────────────
-function PrivateRoute({ children }) {
-  const { isAuthenticated } = useAuth();
-  return isAuthenticated ? children : <Navigate to="/login" replace />;
-}
-
+// ── Garde de route ────────────────────────────────────────
 function AdminRoute({ children }) {
   const { isAuthenticated, user } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (user?.role !== 'admin') return <Navigate to="/mon-espace" replace />;
+  if (user?.role !== 'admin') return <Navigate to="/" replace />;
   return children;
 }
 
@@ -65,28 +59,23 @@ function Sidebar() {
       <div className="sidebar-spacer" />
 
       {/* Section utilisateur connecté */}
+      {/* L'espace personnel (post-its, planning) est intégré au Dashboard :
+          seul l'admin a un lien supplémentaire, vers la page Équipe */}
       {isAuthenticated ? (
         <div className="sidebar-admin-section">
-          <span className="sidebar-section-label">
-            {isAdmin ? 'Administration' : 'Mon compte'}
-          </span>
-          <ul>
-            {isAdmin ? (
-              <li>
-                <NavLink to="/equipe">
-                  <span className="nav-icon">◎</span>
-                  Équipe
-                </NavLink>
-              </li>
-            ) : (
-              <li>
-                <NavLink to="/mon-espace">
-                  <span className="nav-icon">◎</span>
-                  Mon espace
-                </NavLink>
-              </li>
-            )}
-          </ul>
+          {isAdmin && (
+            <>
+              <span className="sidebar-section-label">Administration</span>
+              <ul>
+                <li>
+                  <NavLink to="/equipe">
+                    <span className="nav-icon">◎</span>
+                    Équipe
+                  </NavLink>
+                </li>
+              </ul>
+            </>
+          )}
           {/* Carte utilisateur */}
           <div className="sidebar-user-card">
             <div className="sidebar-user-avatar">{nomCourt.charAt(0).toUpperCase()}</div>
@@ -127,7 +116,8 @@ function AppLayout() {
           <Route path="/documents"  element={<CoffreFort />} />
           <Route path="/assistant"  element={<Assistant />} />
           <Route path="/equipe"     element={<AdminRoute><Equipe /></AdminRoute>} />
-          <Route path="/mon-espace" element={<PrivateRoute><MonEspace /></PrivateRoute>} />
+          {/* Ancienne page "Mon espace" fusionnée dans le Dashboard */}
+          <Route path="/mon-espace" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
     </div>
