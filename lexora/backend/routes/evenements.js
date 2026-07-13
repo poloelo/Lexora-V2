@@ -129,15 +129,21 @@ function checkTargetRights(user, type, employe_id) {
   return null;
 }
 
+// Les événements visibles par un utilisateur donné (admin : tout ; sinon :
+// filtre de visibilité, voir en-tête). Exportée pour la vue dashboard
+// consultée par un manager (routes/dashboard.js) : le calendrier affiché
+// est celui que la cible verrait elle-même.
+export function getEventsVisibleBy(user) {
+  return user.role === 'admin'
+    ? db.prepare(`${EVENT_SELECT} ORDER BY ev.date_debut ASC`).all()
+    : db.prepare(`${EVENT_SELECT} WHERE ${VISIBILITY_WHERE} ORDER BY ev.date_debut ASC`)
+        .all(visibilityParams(user));
+}
+
 // GET — Événements visibles par l'utilisateur, triés chronologiquement.
-// Admin : tout ; sinon : filtre de visibilité (voir en-tête).
 router.get('/', (req, res) => {
   try {
-    const events = req.user.role === 'admin'
-      ? db.prepare(`${EVENT_SELECT} ORDER BY ev.date_debut ASC`).all()
-      : db.prepare(`${EVENT_SELECT} WHERE ${VISIBILITY_WHERE} ORDER BY ev.date_debut ASC`)
-          .all(visibilityParams(req.user));
-    res.json(events);
+    res.json(getEventsVisibleBy(req.user));
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }

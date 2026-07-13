@@ -1,19 +1,88 @@
 /**
- * Equipe.jsx — Gestion interne de l'équipe
+ * Equipe.jsx — Gestion et consultation de l'équipe
  *
- * Répertoire des employés (admin uniquement). Le planning se gère
- * directement dans le Calendrier (événements de type "planning" posés
- * par les managers) ; les automations ont été retirées du périmètre.
+ * Deux publics, deux sections :
+ *  - Dashboards de l'équipe (manager + admin) : liste des employés dont on
+ *    peut consulter le dashboard en LECTURE SEULE (manager : son
+ *    département ; admin : tout le monde). Le clic ouvre le composant
+ *    Dashboard en mode consultation (targetUser), alimenté par
+ *    GET /api/dashboard/:userId — aucune action possible depuis cette vue.
+ *  - Répertoire des employés (admin uniquement) : création/suppression de
+ *    comptes, inchangé.
  *
- * Accès protégé par JWT (voir AuthContext). Le token est envoyé via
- * l'header Authorization: Bearer <token> sur les routes admin.
+ * La consultation se fait par état local (selected) plutôt que par une
+ * route dédiée : le bouton retour revient à la liste sans rechargement.
+ *
+ * Accès protégé par JWT (voir AuthContext) ; la route /equipe est gardée
+ * par ManagerRoute côté React, et chaque API revérifie le rôle côté serveur.
  */
 
 import { useEffect, useState } from 'react';
 import { useToast } from '../contexts/ToastContext.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
+import Dashboard from './Dashboard.jsx';
 
-// ── Sous-composant : répertoire des employés ───────────────
+// ── Sous-composant : dashboards consultables (manager + admin) ──
+function DashboardsEquipe({ onSelect }) {
+  const [equipe, setEquipe]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const toast = useToast();
+  const { authHeaders } = useAuth();
+
+  useEffect(() => {
+    fetch('/api/employes/equipe', { headers: authHeaders })
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(data => { setEquipe(Array.isArray(data) ? data : []); setLoading(false); })
+      .catch(() => { toast('Impossible de charger l\'équipe', 'error'); setLoading(false); });
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="client-list">
+        {[1, 2].map(i => (
+          <div key={i} className="client-item">
+            <div className="client-info">
+              <div className="skeleton" style={{ width: 150, height: 15 }} />
+              <div className="skeleton" style={{ width: 100, height: 12, marginTop: 5 }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (equipe.length === 0) {
+    return (
+      <div className="client-list">
+        <div className="empty-state">
+          <div className="empty-state-icon">◎</div>
+          <p>Aucun employé dans votre périmètre</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="client-list">
+      {equipe.map(e => (
+        <div key={e.id} className="client-item">
+          <div className="client-info">
+            <span className="client-name">{e.nom}</span>
+            <span className="client-email">
+              {e.poste || '—'}
+              {e.departement_nom && ` · ${e.departement_nom}`}
+            </span>
+          </div>
+          <button className="secondary" onClick={() => onSelect(e)}>
+            👁 Voir le dashboard
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Sous-composant : répertoire des employés (admin) ───────
 const FORM_EMPLOYE_VIDE = { nom: '', prenom: '', poste: '', email: '', password: '', departement_id: '', role: 'employe' };
 
 function Employes() {
@@ -163,17 +232,47 @@ function Employes() {
 
 // ── Page principale exportée ───────────────────────────────
 export default function Equipe() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
+  // Employé dont on consulte le dashboard (null = liste)
+  const [selected, setSelected] = useState(null);
+
+  // Vue consultation : le composant Dashboard en mode lecture seule
+  if (selected) {
+    return <Dashboard targetUser={selected} onBack={() => setSelected(null)} />;
+  }
+
   return (
     <div className="page-enter">
       <h1>
         Équipe{' '}
-        <span className="badge badge-cancelled" style={{ fontSize: '0.65rem', verticalAlign: 'middle' }}>
-          Admin
-        </span>
+        {isAdmin && (
+          <span className="badge badge-cancelled" style={{ fontSize: '0.65rem', verticalAlign: 'middle' }}>
+            Admin
+          </span>
+        )}
       </h1>
-      <p className="page-subtitle">Gestion interne — répertoire des employés</p>
+      <p className="page-subtitle">
+        {isAdmin
+          ? 'Gestion des employés et consultation des dashboards'
+          : 'Consultation des dashboards de votre département (lecture seule)'}
+      </p>
 
-      <Employes />
+      <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '1.25rem 0 0.75rem' }}>
+        👁 Dashboards de l'équipe
+      </h2>
+      <DashboardsEquipe onSelect={setSelected} />
+
+      {/* Répertoire : création/suppression de comptes — admin uniquement */}
+      {isAdmin && (
+        <>
+          <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '1.75rem 0 0.75rem' }}>
+            ◎ Répertoire des employés
+          </h2>
+          <Employes />
+        </>
+      )}
     </div>
   );
 }
