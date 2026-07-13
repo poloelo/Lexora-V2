@@ -123,23 +123,12 @@ db.exec(`
   -- Un todo peut viser plusieurs employés (table de jointure N-N).
   ${TODO_ASSIGNEES_SCHEMA}
 
-  -- ── Factures ───────────────────────────────────────────────
-  -- Statuts valides : 'en attente' | 'payee' | 'annulee'
-  -- montant stocké en REAL (virgule flottante) — suffisant pour des montants en €
-  -- NB : le champ client reste volontairement en texte brut : une facture est un
-  -- instantané légal, le libellé du client au moment de l'émission doit rester
-  -- figé même si la fiche client est modifiée ou supprimée par la suite.
-  CREATE TABLE IF NOT EXISTS factures (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    client         TEXT NOT NULL,
-    montant        REAL NOT NULL,
-    statut         TEXT DEFAULT 'en attente',
-    date_emission  TEXT,            -- Format : "YYYY-MM-DD"
-    date_echeance  TEXT             -- Format : "YYYY-MM-DD"
-  );
-
   -- ── Clients ────────────────────────────────────────────────
   -- Gère deux types : 'particulier' (nom + prénom) et 'entreprise' (raison sociale + SIRET).
+  -- dossier_id : chaque client a un sous-dossier dédié dans le coffre-fort
+  -- (créé automatiquement à la création du client, voir routes/clients.js),
+  -- rangé sous le dossier racine "Clients". SET NULL si le dossier est
+  -- supprimé indépendamment : le client survit, simplement sans dossier lié.
   CREATE TABLE IF NOT EXISTS clients (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     type_client    TEXT DEFAULT 'particulier',  -- 'particulier' | 'entreprise'
@@ -154,22 +143,8 @@ db.exec(`
     siret          TEXT,
     tva            TEXT,
     contact_nom    TEXT,             -- Nom du contact chez l'entreprise
+    dossier_id     INTEGER REFERENCES dossiers(id) ON DELETE SET NULL,
     created_at     TEXT DEFAULT (datetime('now'))
-  );
-
-  -- ── Automatisations ────────────────────────────────────────
-  -- Règles d'automatisation configurables (actuellement descriptives,
-  -- non exécutées automatiquement — à implémenter selon les besoins).
-  -- actif stocké en INTEGER : 1 = actif, 0 = inactif (booléen SQLite)
-  CREATE TABLE IF NOT EXISTS automations (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    nom         TEXT NOT NULL,
-    description TEXT,
-    type        TEXT,
-    frequence   TEXT,
-    action      TEXT NOT NULL,
-    actif       INTEGER DEFAULT 1,  -- 1 = actif, 0 = inactif
-    created_at  TEXT DEFAULT (datetime('now'))
   );
 
   -- ── Événements du calendrier (calendrier unifié) ───────────
@@ -406,6 +381,35 @@ if (tableExists('planning')) {
     db.exec('DROP TABLE planning');
   })();
   console.log('✅ Migration : planning → evenements (calendrier unifié)');
+}
+
+// ── Migration 8 : anciennes tables factures / automations (retirées) ──
+// Ces deux fonctionnalités ont été retirées du périmètre de l'application ;
+// on nettoie leurs tables si elles existent encore sur une base ancienne.
+for (const table of ['factures', 'automations']) {
+  if (tableExists(table)) {
+    db.exec(`DROP TABLE ${table}`);
+    console.log(`✅ Migration : table ${table} supprimée (fonctionnalité retirée)`);
+  }
+}
+
+// ── Migration 9 : clients.dossier_id + dossier racine "Clients" ──
+// Chaque client a désormais un sous-dossier dédié dans le coffre-fort,
+// rangé sous un dossier racine fixe nommé "Clients" (pour ne pas polluer
+// la racine de l'arborescence). Ce dossier racine est créé une seule fois,
+// au démarrage, avant que routes/clients.js n'en ait besoin pour y créer
+// les sous-dossiers de chaque client.
+if (!tableColumns('clients').includes('dossier_id')) {
+  db.exec('ALTER TABLE clients ADD COLUMN dossier_id INTEGER REFERENCES dossiers(id) ON DELETE SET NULL');
+  console.log('✅ Migration : clients.dossier_id (FK)');
+}
+const clientsRootFolder = db.prepare(
+  "SELECT id FROM dossiers WHERE nom = 'Clients' AND parent_id IS NULL"
+).get();
+if (!clientsRootFolder) {
+  db.prepare("INSERT INTO dossiers (nom, description, parent_id) VALUES ('Clients', ?, NULL)")
+    .run('Dossier racine automatique : contient un sous-dossier par client.');
+  console.log('✅ Dossier racine "Clients" créé');
 }
 
 // Seed : créer un compte admin depuis les variables d'env s'il n'en existe aucun

@@ -1,12 +1,9 @@
 /**
  * Equipe.jsx — Gestion interne de l'équipe
  *
- * Cette page regroupe deux sections liées à l'organisation interne :
- *  - Employés  : répertoire de l'équipe (admin)
- *  - Automations : tâches automatisées (admin)
- *
- * Le planning des employés se gère désormais directement dans le
- * Calendrier (événements de type "planning" posés par les managers).
+ * Répertoire des employés (admin uniquement). Le planning se gère
+ * directement dans le Calendrier (événements de type "planning" posés
+ * par les managers) ; les automations ont été retirées du périmètre.
  *
  * Accès protégé par JWT (voir AuthContext). Le token est envoyé via
  * l'header Authorization: Bearer <token> sur les routes admin.
@@ -15,7 +12,6 @@
 import { useEffect, useState } from 'react';
 import { useToast } from '../contexts/ToastContext.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
-import Tabs from '../components/Tabs.jsx';
 
 // ── Sous-composant : répertoire des employés ───────────────
 const FORM_EMPLOYE_VIDE = { nom: '', prenom: '', poste: '', email: '', password: '', departement_id: '', role: 'employe' };
@@ -165,102 +161,6 @@ function Employes() {
   );
 }
 
-// ── Sous-composant : automations ───────────────────────────
-function Automations() {
-  const [automations, setAutomations] = useState([]);
-  const [form, setForm]               = useState({ nom: '', action: '' });
-  const [loading, setLoading]         = useState(true);
-  const [saving, setSaving]           = useState(false);
-  const toast = useToast();
-  const { authHeaders } = useAuth();
-
-  const adminHeaders = { 'Content-Type': 'application/json', ...authHeaders };
-
-  const load = () =>
-    fetch('/api/automations', { headers: authHeaders })
-      .then(r => r.json())
-      .then(data => { setAutomations(Array.isArray(data) ? data : []); setLoading(false); })
-      .catch(() => { toast('Impossible de charger les automations', 'error'); setLoading(false); });
-
-  useEffect(() => { load(); }, []);
-
-  const handleChange = e => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
-
-  const ajouter = async e => {
-    e.preventDefault();
-    if (!form.nom.trim()) return;
-    setSaving(true);
-    try {
-      await fetch('/api/automations', {
-        method: 'POST',
-        headers: adminHeaders,
-        body: JSON.stringify(form),
-      });
-      setForm({ nom: '', action: '' });
-      await load();
-      toast('Automation ajoutée');
-    } catch {
-      toast('Erreur lors de l\'ajout', 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const supprimer = async id => {
-    try {
-      await fetch(`/api/automations/${id}`, { method: 'DELETE', headers: adminHeaders });
-      setAutomations(prev => prev.filter(a => a.id !== id));
-      toast('Automation supprimée');
-    } catch {
-      toast('Erreur lors de la suppression', 'error');
-    }
-  };
-
-  return (
-    <div>
-      <form onSubmit={ajouter}>
-        <input name="nom"    placeholder="Nom de l'automation *" value={form.nom}    onChange={handleChange} required />
-        <input name="action" placeholder="Action déclenchée"     value={form.action} onChange={handleChange} style={{ minWidth: 240 }} />
-        <button type="submit" disabled={saving}>
-          {saving ? <><span className="spinner" /> Ajout...</> : '+ Ajouter'}
-        </button>
-      </form>
-
-      {loading ? (
-        <div className="client-list">
-          {[1, 2].map(i => (
-            <div key={i} className="client-item">
-              <div className="client-info">
-                <div className="skeleton" style={{ width: 160, height: 15 }} />
-                <div className="skeleton" style={{ width: 220, height: 12, marginTop: 5 }} />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : automations.length === 0 ? (
-        <div className="client-list">
-          <div className="empty-state">
-            <div className="empty-state-icon">⚙</div>
-            <p>Aucune automation configurée</p>
-          </div>
-        </div>
-      ) : (
-        <div className="client-list">
-          {automations.map(a => (
-            <div key={a.id} className="client-item">
-              <div className="client-info">
-                <span className="client-name">{a.nom}</span>
-                {a.action && <span className="client-email">⚡ {a.action}</span>}
-              </div>
-              <button className="danger" onClick={() => supprimer(a.id)}>Supprimer</button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── Page principale exportée ───────────────────────────────
 export default function Equipe() {
   return (
@@ -271,12 +171,9 @@ export default function Equipe() {
           Admin
         </span>
       </h1>
-      <p className="page-subtitle">Gestion interne — employés et automations</p>
+      <p className="page-subtitle">Gestion interne — répertoire des employés</p>
 
-      <Tabs tabs={['Employés', 'Automations']}>
-        <Employes />
-        <Automations />
-      </Tabs>
+      <Employes />
     </div>
   );
 }
