@@ -11,8 +11,7 @@ services:
       - PORT=3000
       - DB_PATH=/app/data/lexora.db
       - OLLAMA_URL=http://host.docker.internal:11434
-      # Surchargez ADMIN_KEY et OLLAMA_MODEL via un fichier .env ou une variable d'env
-      # ADMIN_KEY=votre-cle-secrete
+      # Surchargez JWT_SECRET et OLLAMA_MODEL via un fichier .env ou une variable d'env
       # OLLAMA_MODEL=llama3.2
     volumes:
       - sqlite-data:/app/data
