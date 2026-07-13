@@ -4,7 +4,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext.jsx';
 
 import Dashboard       from './pages/Dashboard.jsx';
 import Taches          from './pages/Taches.jsx';
-import ClientsFactures from './pages/ClientsFactures.jsx';
+import Clients         from './pages/Clients.jsx';
 import Calendrier      from './pages/Calendrier.jsx';
 import CoffreFort      from './pages/Coffre_fort.jsx';
 import Assistant       from './pages/Assistant.jsx';
@@ -28,12 +28,12 @@ function AdminRoute({ children }) {
 
 // ── Navigation principale ─────────────────────────────────
 const NAV_PRINCIPAL = [
-  { to: '/',           label: 'Dashboard',          icon: '▦', end: true },
-  { to: '/taches',     label: 'Tâches',             icon: '✓' },
-  { to: '/business',   label: 'Clients & Factures', icon: '€' },
-  { to: '/calendrier', label: 'Calendrier',         icon: '◫' },
-  { to: '/documents',  label: 'Documents',          icon: '📁' },
-  { to: '/assistant',  label: 'Assistant IA',       icon: '◈' },
+  { to: '/',           label: 'Dashboard',    icon: '▦', end: true },
+  { to: '/taches',     label: 'Tâches',       icon: '✓' },
+  { to: '/clients',    label: 'Clients',      icon: '◉' },
+  { to: '/calendrier', label: 'Calendrier',   icon: '◫' },
+  { to: '/documents',  label: 'Documents',    icon: '📁' },
+  { to: '/assistant',  label: 'Assistant IA', icon: '◈' },
 ];
 
 // ── Sidebar ───────────────────────────────────────────────
@@ -118,13 +118,15 @@ function AppLayout() {
         <Routes>
           <Route path="/"           element={<Dashboard />} />
           <Route path="/taches"     element={<Taches />} />
-          <Route path="/business"   element={<ClientsFactures />} />
+          <Route path="/clients"    element={<Clients />} />
           <Route path="/calendrier" element={<Calendrier />} />
           <Route path="/documents"  element={<CoffreFort />} />
           <Route path="/assistant"  element={<Assistant />} />
           <Route path="/equipe"     element={<AdminRoute><Equipe /></AdminRoute>} />
           {/* Ancienne page "Mon espace" fusionnée dans le Dashboard */}
           <Route path="/mon-espace" element={<Navigate to="/" replace />} />
+          {/* Ancienne page "Clients & Factures" — Factures retirée du périmètre */}
+          <Route path="/business" element={<Navigate to="/clients" replace />} />
         </Routes>
       </main>
     </div>

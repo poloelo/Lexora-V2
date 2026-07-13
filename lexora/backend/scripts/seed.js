@@ -128,9 +128,42 @@ for (const e of EVENEMENTS) {
   }
 }
 
+// ── Clients ────────────────────────────────────────────────
+// Le dossier racine "Clients" est créé par la migration 9 de db.js (elle
+// s'exécute à l'import ci-dessus, avant ce script) : il existe donc déjà.
+// Chaque client de démo reçoit son sous-dossier automatique, comme le fait
+// POST /api/clients en conditions réelles.
+const CLIENTS = [
+  { nom: 'Société Lumina',    email: 'contact@lumina.fr',    telephone: '01 23 45 67 89' },
+  { nom: 'Jean Berthier',     email: 'j.berthier@mail.fr',   telephone: '06 12 34 56 78' },
+  { nom: 'Atelier Verrier',   email: 'contact@atelier-v.fr', telephone: '01 98 76 54 32' },
+];
+
+const clientsRootId = db.prepare(
+  "SELECT id FROM dossiers WHERE nom = 'Clients' AND parent_id IS NULL"
+).get().id;
+
+const findClient   = db.prepare('SELECT id FROM clients WHERE email = ?');
+const insertClient = db.prepare(`
+  INSERT INTO clients (nom, email, telephone) VALUES (?, ?, ?)
+`);
+const insertDossier = db.prepare(
+  'INSERT INTO dossiers (nom, description, parent_id) VALUES (?, ?, ?)'
+);
+const linkDossier = db.prepare('UPDATE clients SET dossier_id = ? WHERE id = ?');
+
+for (const c of CLIENTS) {
+  if (!findClient.get(c.email)) {
+    const { lastInsertRowid: clientId } = insertClient.run(c.nom, c.email, c.telephone);
+    const { lastInsertRowid: dossierId } = insertDossier.run(c.nom, null, clientsRootId);
+    linkDossier.run(dossierId, clientId);
+  }
+}
+
 console.log('✅ Seed terminé');
 console.log(`   Départements : ${db.prepare('SELECT COUNT(*) AS n FROM departements').get().n}`);
 console.log(`   Employés     : ${db.prepare('SELECT COUNT(*) AS n FROM employes').get().n} (mot de passe démo : ${DEMO_PASSWORD})`);
 console.log(`   Tasks        : ${db.prepare('SELECT COUNT(*) AS n FROM tasks').get().n}`);
 console.log(`   Todos        : ${db.prepare('SELECT COUNT(*) AS n FROM todos').get().n}`);
 console.log(`   Événements   : ${db.prepare('SELECT COUNT(*) AS n FROM evenements').get().n}`);
+console.log(`   Clients      : ${db.prepare('SELECT COUNT(*) AS n FROM clients').get().n} (chacun avec son dossier dans Clients/)`);

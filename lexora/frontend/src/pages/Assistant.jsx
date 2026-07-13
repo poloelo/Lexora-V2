@@ -95,7 +95,7 @@ export default function Assistant() {
               <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>◈</div>
               <p style={{ fontSize: '0.95rem' }}>Bonjour ! Comment puis-je vous aider ?</p>
               <p style={{ fontSize: '0.82rem', marginTop: 6 }}>
-                Posez une question sur vos tâches, factures ou votre activité.
+                Posez une question sur vos tâches, clients ou votre activité.
               </p>
             </div>
           )}

@@ -21,12 +21,10 @@ import rateLimit from 'express-rate-limit';
 // ── Import des modules de routes ──────────────────────────────
 import tasksRouter       from './routes/tasks.js';
 import departementsRouter from './routes/departements.js';
-import facturesRouter    from './routes/factures.js';
 import assistantRouter   from './routes/assistant.js';
 import todosRouter       from './routes/todos.js';
 import clientsRouter     from './routes/clients.js';
 import employesRouter    from './routes/employes.js';
-import automationsRouter from './routes/automations.js';
 import evenementsRouter  from './routes/evenements.js';
 import documentsRouter   from './routes/documents.js';
 import authRouter        from './routes/auth.js';
@@ -84,12 +82,10 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth',         authRouter);
 app.use('/api/tasks',        tasksRouter);
 app.use('/api/departements', departementsRouter);
-app.use('/api/factures',     facturesRouter);
 app.use('/api/assistant',    assistantRouter);
 app.use('/api/todos',        todosRouter);
 app.use('/api/clients',      clientsRouter);
 app.use('/api/employes',    employesRouter);
-app.use('/api/automations', automationsRouter);
 app.use('/api/evenements',  evenementsRouter);
 app.use('/api/documents',   documentsRouter);
 
