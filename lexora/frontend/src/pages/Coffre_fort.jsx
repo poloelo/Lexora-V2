@@ -9,9 +9,12 @@
  *  - Suppression dossiers et documents
  *  - Les fichiers sont stockés physiquement sur le serveur (/backend/uploads/)
  *    et leurs métadonnées en base SQLite
+ *  - Ouverture directe d'un dossier via l'URL (?dossier=<id>) : utilisé par
+ *    le bouton "Voir le dossier" de la page Clients
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
@@ -30,9 +33,16 @@ const STATUT_STYLE = {
 };
 
 export default function CoffreFort() {
+  const [searchParams] = useSearchParams();
+
   // ── État de la navigation ──────────────────────────────
-  // currentFolderId = null → on est à la racine
-  const [currentFolderId, setCurrentFolderId] = useState(null);
+  // currentFolderId = null → on est à la racine.
+  // Si l'URL contient ?dossier=<id> (lien "Voir le dossier" depuis Clients),
+  // on ouvre directement ce dossier plutôt que la racine.
+  const dossierParam = searchParams.get('dossier');
+  const [currentFolderId, setCurrentFolderId] = useState(
+    dossierParam ? Number(dossierParam) : null
+  );
 
   // ── Données chargées depuis l'API ──────────────────────
   const [dossiers,  setDossiers]  = useState([]);  // Tous les dossiers

@@ -3,10 +3,10 @@
  *
  * Fusion de l'ancien "Mon espace" et du dashboard KPI : cette page sert
  * désormais d'espace personnel pour tout utilisateur connecté (admin compris) :
- *  - KPI animés (tâches, factures) — visibles même déconnecté
+ *  - KPI animés (tâches) — visibles même déconnecté
  *  - Mur de post-its (todos personnels) — connecté uniquement
  *  - Mon planning : prochaine journée + tableau des créneaux — connecté uniquement
- *  - Listes des tâches et factures récentes
+ *  - Liste des tâches récentes
  */
 
 import { useEffect, useState, useRef } from 'react';
@@ -38,13 +38,7 @@ function useCountUp(target, duration = 900) {
   return value;
 }
 
-const CARD_COLORS = [
-  '#7c6af7',
-  '#3b82f6',
-  '#f59e0b',
-  '#ef4444',
-  '#10b981',
-];
+const CARD_COLORS = ['#7c6af7', '#3b82f6'];
 
 function StatCard({ icon, value, label, color, suffix = '' }) {
   const animated = useCountUp(typeof value === 'number' ? value : 0);
@@ -70,12 +64,6 @@ const STATUT_TACHE = {
   todo:        { label: 'À faire',  cls: 'badge-todo' },
   in_progress: { label: 'En cours', cls: 'badge-in-progress' },
   done:        { label: 'Terminé',  cls: 'badge-done' },
-};
-
-const STATUT_FACTURE = {
-  'en attente': { label: 'En attente', cls: 'badge-pending' },
-  payee:        { label: 'Payée',      cls: 'badge-paid' },
-  annulee:      { label: 'Annulée',    cls: 'badge-cancelled' },
 };
 
 // Formate une date "2025-06-15" en "dimanche 15 juin"
@@ -106,7 +94,6 @@ function calculerDuree(debutIso, finIso) {
 export default function Dashboard() {
   const { user, authHeaders, isAuthenticated } = useAuth();
   const [taches, setTaches]     = useState([]);
-  const [factures, setFactures] = useState([]);
   const [planning, setPlanning] = useState([]);
   const [filtre, setFiltre]     = useState('a_venir'); // 'a_venir' | 'tous'
   const [loading, setLoading]   = useState(true);
@@ -115,13 +102,10 @@ export default function Dashboard() {
     Promise.all([
       fetch('/api/tasks', { headers: authHeaders })
         .then(r => (r.ok ? r.json() : [])).catch(() => []),
-      fetch('/api/factures', { headers: authHeaders })
-        .then(r => (r.ok ? r.json() : [])).catch(() => []),
       fetch('/api/evenements', { headers: authHeaders })
         .then(r => (r.ok ? r.json() : [])).catch(() => []),
-    ]).then(([t, f, ev]) => {
+    ]).then(([t, ev]) => {
       setTaches(Array.isArray(t) ? t : []);
-      setFactures(Array.isArray(f) ? f : []);
       // "Mon planning" = les événements qui me ciblent (planning posé par
       // mon manager + mes événements personnels) — filtre par clé étrangère
       const all = Array.isArray(ev) ? ev : [];
@@ -130,15 +114,12 @@ export default function Dashboard() {
     });
   }, [user?.id]);
 
-  const tachesEnCours    = taches.filter(t => t.status === 'in_progress').length;
-  const facturesImpayees = factures.filter(f => f.statut === 'en attente').length;
-  const totalFactures    = factures.reduce((s, f) => s + (f.montant || 0), 0);
+  const tachesEnCours = taches.filter(t => t.status === 'in_progress').length;
 
-  // L'API retourne déjà les éléments triés du plus récent au plus ancien
-  // (ORDER BY created_at DESC / ORDER BY id DESC).
-  // On prend simplement les 5 premiers — pas besoin de reverse().
-  const recentTaches   = taches.slice(0, 5);
-  const recentFactures = factures.slice(0, 5);
+  // L'API retourne déjà les tâches triées du plus récent au plus ancien
+  // (ORDER BY created_at DESC). On prend simplement les 5 premières —
+  // pas besoin de reverse().
+  const recentTaches = taches.slice(0, 5);
 
   const todayStr = new Date().toLocaleDateString('fr-FR', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -174,11 +155,8 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="stats-grid">
-          <StatCard icon="✓" value={taches.length}    label="Tâches totales"    color={CARD_COLORS[0]} />
-          <StatCard icon="◷" value={tachesEnCours}    label="En cours"          color={CARD_COLORS[1]} />
-          <StatCard icon="€" value={factures.length}  label="Factures"          color={CARD_COLORS[2]} />
-          <StatCard icon="⏳" value={facturesImpayees} label="En attente"        color={CARD_COLORS[3]} />
-          <StatCard icon="∑" value={Math.round(totalFactures)} label="Volume total (€)" color={CARD_COLORS[4]} />
+          <StatCard icon="✓" value={taches.length} label="Tâches totales" color={CARD_COLORS[0]} />
+          <StatCard icon="◷" value={tachesEnCours} label="En cours"       color={CARD_COLORS[1]} />
         </div>
       )}
 
@@ -278,26 +256,14 @@ export default function Dashboard() {
         </>
       )}
 
-      <div className="dashboard-grid">
-        <div className="recent-section">
-          <div className="recent-header">✓ Tâches récentes</div>
-          {recentTaches.length === 0 ? (
-            <div className="empty-state"><p>Aucune tâche</p></div>
-          ) : recentTaches.map(t => {
-            const s = STATUT_TACHE[t.status] || { label: t.status, cls: 'badge-todo' };
-            return <RecentItem key={t.id} name={t.title} badge={s.label} badgeClass={s.cls} />;
-          })}
-        </div>
-
-        <div className="recent-section">
-          <div className="recent-header">€ Factures récentes</div>
-          {recentFactures.length === 0 ? (
-            <div className="empty-state"><p>Aucune facture</p></div>
-          ) : recentFactures.map(f => {
-            const s = STATUT_FACTURE[f.statut] || { label: f.statut, cls: 'badge-pending' };
-            return <RecentItem key={f.id} name={`${f.client} — ${f.montant} €`} badge={s.label} badgeClass={s.cls} />;
-          })}
-        </div>
+      <div className="recent-section">
+        <div className="recent-header">✓ Tâches récentes</div>
+        {recentTaches.length === 0 ? (
+          <div className="empty-state"><p>Aucune tâche</p></div>
+        ) : recentTaches.map(t => {
+          const s = STATUT_TACHE[t.status] || { label: t.status, cls: 'badge-todo' };
+          return <RecentItem key={t.id} name={t.title} badge={s.label} badgeClass={s.cls} />;
+        })}
       </div>
     </div>
   );

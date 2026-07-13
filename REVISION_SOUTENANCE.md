@@ -9,7 +9,7 @@
 
 ### 1.1 Qu'est-ce que Lexora ?
 
-Un **ERP full-stack pour petites équipes** : dashboard KPI, tâches de département (kanban), post-its personnels, CRM + factures, calendrier, coffre-fort documentaire, assistant IA local, et panneau admin (employés, automations). Le planning des employés vit dans le calendrier unifié (événements de type « planning » posés par les managers).
+Un **ERP full-stack pour petites équipes** : dashboard KPI, tâches de département (kanban), post-its personnels, CRM clients (avec dossier documentaire dédié par client), calendrier, coffre-fort documentaire, assistant IA local, et panneau admin (employés). Le planning des employés vit dans le calendrier unifié (événements de type « planning » posés par les managers). Les modules Factures et Automations, non utilisés, ont été retirés du périmètre avant la soutenance.
 
 ### 1.2 Stack technique et justification des choix
 
@@ -92,12 +92,12 @@ Lexora-V2/
 │
 └── lexora/
     ├── backend/                          ◄── API REST Express
-    │   ├── index.js                      # POINT D'ENTRÉE : middlewares globaux + montage des 11 routers
+    │   ├── index.js                      # POINT D'ENTRÉE : middlewares globaux + montage des 9 routers
     │   ├── env.js                        # Charge .env (dotenv) — importé EN PREMIER dans index.js
     │   ├── middleware/
     │   │   └── auth.js                   # MIDDLEWARES : verifyJWT, loadUser, requireRole
     │   ├── models/
-    │   │   └── db.js                     # MODEL : connexion SQLite, création du schéma, 7 migrations idempotentes, seed admin
+    │   │   └── db.js                     # MODEL : connexion SQLite, création du schéma, 9 migrations idempotentes, seed admin
     │   ├── services/
     │   │   └── ollamaService.js          # SERVICE : client HTTP vers Ollama (fonction chat)
     │   ├── routes/                       # ROUTES = "controllers" : 1 fichier = 1 domaine métier
@@ -106,9 +106,8 @@ Lexora-V2/
     │   │   ├── todos.js                  # Post-its personnels — protégé JWT, règles créateur/assigné
     │   │   ├── departements.js           # Référentiel départements — lecture authentifiée, écriture admin
     │   │   ├── employes.js               # Annuaire employés — admin (+ /selector pour manager)
-    │   │   ├── automations.js            # Règles d'automatisation (CRUD descriptif) — JWT requis
-    │   │   ├── clients.js                # CRM clients (particulier/entreprise) — protégé JWT
-    │   │   ├── factures.js               # Factures — protégé JWT
+    │   │   ├── clients.js                # CRM clients — protégé JWT ; crée/gère le sous-dossier
+    │   │   │                             #  automatique de chaque client dans le Coffre-fort
     │   │   ├── evenements.js             # Calendrier unifié (général / planning / personnel)
     │   │   │                             #  avec règles de visibilité par rôle — protégé JWT
     │   │   ├── documents.js              # Coffre-fort : dossiers + upload/download Multer — protégé JWT
@@ -127,19 +126,19 @@ Lexora-V2/
             │   ├── AuthContext.jsx       # État global auth : token, user, login(), logout(), authHeaders
             │   └── ToastContext.jsx      # Notifications toast globales (useToast)
             ├── components/
-            │   ├── Tabs.jsx              # Onglets réutilisables (Clients/Factures, Équipe)
             │   └── PostItWall.jsx        # Mur de post-its (todos) avec toggle optimiste
             └── pages/                    # 1 fichier = 1 écran de la sidebar
                 ├── Dashboard.jsx         # Accueil unifié : KPI animés (useCountUp) + post-its
                 │                         #  + planning personnel + listes récentes
                 │                         #  (fusion de l'ancienne page "Mon espace")
                 ├── Taches.jsx            # Kanban 3 colonnes, drag & drop HTML5
-                ├── ClientsFactures.jsx   # 2 onglets : CRM + factures
+                ├── Clients.jsx           # CRM clients : liste, création (+ dossier auto), lien
+                │                         #  "Voir le dossier", modale de suppression à 2 choix
                 ├── Calendrier.jsx        # react-big-calendar, source unique /api/evenements,
                 │                         #  création planning (manager) + choix de couleur
                 ├── Coffre_fort.jsx       # Arborescence, drag & drop upload, fil d'Ariane
                 ├── Assistant.jsx         # Chat avec le LLM
-                ├── Equipe.jsx            # ADMIN : 2 onglets (Employés, Automations)
+                ├── Equipe.jsx            # ADMIN : répertoire des employés (page simple, sans onglets)
                 └── Login.jsx             # Formulaire de connexion
 ```
 
@@ -172,9 +171,9 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 | `GET /api/employes/selector` | employes.js | verifyJWT, loadUser (tout utilisateur authentifié) | employes | `[{id, nom}]` minimal |
 | `GET/POST/PUT/DELETE /api/employes` | employes.js | + requireRole(admin) | employes ⋈ departements | CRUD sans password_hash |
 | `PUT /api/employes/:id/password` | employes.js | + requireRole(admin) | employes | `{ message }` |
-| `GET/POST/PUT/DELETE /api/automations` | automations.js | verifyJWT seul | automations | CRUD |
-| `GET/POST/PUT/DELETE /api/clients` | clients.js | verifyJWT, loadUser | clients | CRUD |
-| `GET/POST/PUT/DELETE /api/factures` | factures.js | verifyJWT, loadUser | factures | CRUD |
+| `GET/POST /api/clients` | clients.js | verifyJWT, loadUser | clients + dossiers | GET : liste ; POST : 201 + crée le sous-dossier client dans `Clients/`, lie `dossier_id` |
+| `PUT /api/clients/:id` | clients.js | verifyJWT, loadUser | clients | Client mis à jour (le dossier n'est jamais renommé automatiquement) |
+| `DELETE /api/clients/:id` | clients.js | verifyJWT, loadUser | clients (+ dossiers si demandé) | Sans dossier lié : 200. Avec dossier et sans `?deleteDossier=` : **409** + infos pour confirmation. `?deleteDossier=true` : supprime aussi le dossier (récursif) ; `?deleteDossier=false` : client seul, dossier détaché |
 | `GET /api/evenements` | evenements.js | verifyJWT, loadUser | evenements ⋈ employes (cible + créateur) | Événements **visibles par moi** : généraux + planning de mon département + les miens (admin : tout) |
 | `POST /api/evenements` | evenements.js | verifyJWT, loadUser | evenements | 201 ; type `planning` → réservé au manager du département de la cible, **couleur verte forcée** |
 | `PUT/DELETE /api/evenements/:id` | evenements.js | verifyJWT, loadUser | evenements | Créateur (perso/général), manager du département (planning), admin partout |
@@ -193,13 +192,13 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 |---|---|---|---|
 | `App.jsx` (racine) | Sidebar, AuthProvider, ToastProvider, garde AdminRoute | — | `useAuth` pour la garde et la carte utilisateur ; `/mon-espace` redirige vers `/` (fusion) |
 | `Login.jsx` (`/login`) | — | `POST /api/auth/login` (via `login()` du AuthContext) | `form`, `error`, `loading` ; `useNavigate` : admin → `/equipe`, sinon → `/` |
-| `Dashboard.jsx` (`/`) | StatCard (avec hook `useCountUp`), RecentItem, **PostItWall** | `GET /api/tasks`, `GET /api/factures`, `GET /api/evenements` — en `Promise.all` ; « Mon planning » = événements filtrés par `employe_id === user.id` | `taches`, `factures`, `planning`, `filtre`, `loading` ; KPI par `filter`/`reduce` ; sections personnelles (post-its, planning) rendues seulement si `isAuthenticated` |
+| `Dashboard.jsx` (`/`) | StatCard (avec hook `useCountUp`), RecentItem, **PostItWall** | `GET /api/tasks`, `GET /api/evenements` — en `Promise.all` ; « Mon planning » = événements filtrés par `employe_id === user.id` | `taches`, `planning`, `filtre`, `loading` ; KPI (tâches totales / en cours) par `filter` ; sections personnelles (post-its, planning) rendues seulement si `isAuthenticated` |
 | `Taches.jsx` (`/taches`) | TaskCard (draggable) | `GET /api/tasks?department_id=`, `GET /api/departements`, `POST /api/tasks`, `PATCH /api/tasks/:id/status`, `DELETE /api/tasks/:id` | `tasks`, `prioFilter`, `depFilter`, `modalOpen`, `form` ; **update optimiste** sur le statut |
-| `ClientsFactures.jsx` (`/business`) | Tabs → Clients, Factures, StatusBadge | `GET/POST/DELETE /api/clients`, `GET/POST/DELETE /api/factures` | Chaque onglet a son propre state (`clients`/`factures`, `form`, `search`) |
+| `Clients.jsx` (`/clients`) | — (page simple, sans onglets) | `GET/POST/DELETE /api/clients` | `clients`, `form`, `search`, `confirmDelete` (modale à 2 choix) ; bouton « Voir le dossier » → `navigate('/documents?dossier=' + id)` |
 | `Calendrier.jsx` (`/calendrier`) | `<Calendar>` (react-big-calendar), Modal | `GET /api/evenements` (source unique, déjà filtrée par le backend), `GET /api/employes/selector` (manager/admin), `POST /api/evenements`, `DELETE /api/evenements/:id` | `events` convertis au format `{title, start, end}`, `showCreate`, `detail`, `form` (type, couleur, employé ciblé, case « personnel ») |
-| `Coffre_fort.jsx` (`/documents`) | — (tout interne) | `GET /api/documents/dossiers`, `GET /api/documents`, `POST .../dossiers`, `POST .../upload` (FormData), `GET .../:id/download`, `DELETE` | `currentFolderId` (navigation), `dossiers`, `documents`, `dragActive` ; fil d'Ariane recalculé |
+| `Coffre_fort.jsx` (`/documents`) | — (tout interne) | `GET /api/documents/dossiers`, `GET /api/documents`, `POST .../dossiers`, `POST .../upload` (FormData), `GET .../:id/download`, `DELETE` | `currentFolderId` (navigation, initialisé depuis `?dossier=` si présent via `useSearchParams`), `dossiers`, `documents`, `dragActive` ; fil d'Ariane recalculé |
 | `Assistant.jsx` (`/assistant`) | — | `POST /api/assistant { prompt }` | `messages` (tableau {role, text, time}), `input`, `loading` ; auto-scroll via `useRef` |
-| `Equipe.jsx` (`/equipe`, **AdminRoute**) | Tabs → Employes, Automations | `GET/POST/DELETE /api/employes`, `GET /api/departements`, `GET/POST/DELETE /api/automations` | Chaque onglet : liste + `form` + `search` ; headers admin = `authHeaders` ; le planning se gère dans le Calendrier |
+| `Equipe.jsx` (`/equipe`, **AdminRoute**) | — (page simple, sans onglets) | `GET/POST/DELETE /api/employes`, `GET /api/departements` | `employes`, `departements`, `form`, `search` ; headers admin = `authHeaders` ; planning et automations retirés du périmètre |
 | `PostItWall.jsx` (composant, rendu dans Dashboard) | — | `GET/POST/DELETE /api/todos`, `PATCH /api/todos/:id/toggle`, `GET /api/employes/selector` | `todos`, `content`, `color`, `assignees` ; **toggle optimiste avec rollback** |
 
 **Modèle mental à réciter** : *chaque page suit le même cycle : `useEffect` au montage → `fetch` → `setState` → rendu conditionnel (skeleton pendant `loading`, empty-state si vide, données sinon). Les mutations mettent à jour l'état local directement (ou rechargent via `load()`), et affichent un toast.*
@@ -311,8 +310,22 @@ Trois natures d'événements dans une seule table, selon `employe_id` et `type` 
 **`supprimerDossierRecursif(dossierId)`**
 - **Étapes** : ① supprime les fichiers **physiques** du dossier (fs.unlinkSync) puis leurs lignes en base → ② se rappelle elle-même sur chaque sous-dossier → ③ supprime le dossier lui-même.
 - **Pourquoi récursif** : l'arborescence est de profondeur arbitraire (self-reference `parent_id`). L'ordre (fichiers d'abord, dossier en dernier) garantit qu'on ne laisse ni fichiers orphelins sur le disque ni métadonnées fantômes en base.
+- **Exportée** et réutilisée telle quelle par `routes/clients.js` (voir 4.6 bis) : un seul endroit sait supprimer un dossier proprement, pas de duplication de la logique récursive.
 
 **`GET /:id/download`** : `res.download(filePath, doc.nom)` envoie le fichier avec le header `Content-Disposition: attachment` et **le nom d'origine** (pas le nom timestampé du disque).
+
+### 4.6 bis — Dossier client automatique (`routes/clients.js`)
+
+Chaque client a un sous-dossier dédié dans le coffre-fort, rangé sous un dossier racine fixe **"Clients"** (créé une seule fois par la migration 9 de `db.js`, pour ne pas polluer la racine de l'arborescence).
+
+**`POST /api/clients`** — création atomique client + dossier
+- `db.transaction(() => { ... })` : insère le client, calcule son nom affichable (`nomAffichable` : raison sociale pour une entreprise, sinon "Prénom Nom", email en dernier recours), crée le sous-dossier sous `Clients/`, puis lie `dossier_id` sur le client. **Tout ou rien** : on ne veut jamais d'un client créé sans dossier lié si une étape échoue en cours de route.
+
+**`DELETE /api/clients/:id`** — suppression en deux temps, jamais silencieuse
+- Sans paramètre `deleteDossier` et si un dossier est lié : renvoie **409** (`requiresConfirmation: true`, `dossier_id`, `dossier_nom`) et **ne supprime rien**. Le frontend affiche alors sa modale à deux choix.
+- `?deleteDossier=true` : supprime le client **et** le dossier (récursivement, via `supprimerDossierRecursif` importée de `documents.js`).
+- `?deleteDossier=false` : supprime le client seul ; le dossier reste, simplement détaché (plus aucun client ne le référence — RGPD assumé : les documents ne sont pas des données personnelles à purger automatiquement, l'utilisateur décide).
+- **Pourquoi ce flux en 2 appels plutôt qu'un simple booléen dans le body du DELETE** : un `DELETE` ne devrait pas nécessiter de body pour fonctionner normalement ; passer par un code 409 + requête de suivi avec query param garde chaque appel HTTP sémantiquement simple, et évite qu'un appel non-interactif (script, tests) supprime un dossier par accident sans confirmation explicite.
 
 ### 4.7 Backend — Assistant IA (`services/ollamaService.js`)
 
@@ -410,17 +423,16 @@ Toutes les requêtes utilisent des **placeholders `?`** (`db.prepare('... WHERE 
 
 - **Droit à l'effacement** : la suppression d'un employé purge en cascade son planning et ses assignations ; ses créations survivent mais **anonymisées** (`created_by → NULL`).
 - **Minimisation** : `/api/employes/selector` ne renvoie que `{id, nom}` (pas d'email, de salaire ni de rôle) — c'est ce qui permet de l'ouvrir à tout utilisateur authentifié pour l'assignation de post-its sans exposer de données sensibles ; l'annuaire complet reste admin-only.
-- **Factures** : le nom du client reste en texte brut **volontairement** — une facture est un instantané légal qui doit rester figé même si la fiche client change (obligation de conservation ≠ droit à l'effacement).
+- **Suppression de client** : le dossier documentaire associé n'est **jamais** purgé automatiquement — la décision revient explicitement à l'utilisateur (modale à deux choix), car des documents peuvent avoir une valeur légale propre (factures, contrats) indépendante du cycle de vie de la fiche client.
 - **IA locale** : Ollama tourne sur la machine → aucun prompt n'est envoyé à un service cloud.
 
 ### 5.7 Limites connues (à annoncer soi-même — ça fait gagner des points)
 
-1. **`automations.js`** : `isAdmin = verifyJWT` — vérifie l'authentification mais **pas le rôle** (contrairement à employes.js qui utilise `requireRole('admin')`). À corriger avec `requireRole('admin')`.
-2. **localStorage vs cookie httpOnly** pour le JWT (voir 5.1).
-3. **Pas de refresh token** : une seule durée de 24 h.
-4. **HTTP interne** : Nginx→backend en clair (acceptable dans un réseau Docker privé ; en prod publique il faudrait TLS au niveau de Nginx).
-5. **Pas de tests automatisés** ; QA manuelle documentée dans `QA_REPORT.md`.
-6. **Pas de granularité par rôle** sur les modules métier (clients, factures, documents...) : tout utilisateur authentifié y accède à l'identique — un raffinement possible serait de réserver l'écriture à certains rôles via `requireRole`.
+1. **localStorage vs cookie httpOnly** pour le JWT (voir 5.1).
+2. **Pas de refresh token** : une seule durée de 24 h.
+3. **HTTP interne** : Nginx→backend en clair (acceptable dans un réseau Docker privé ; en prod publique il faudrait TLS au niveau de Nginx).
+4. **Pas de tests automatisés** ; QA manuelle documentée dans `QA_REPORT.md`.
+5. **Pas de granularité par rôle** sur les modules métier (clients, documents...) : tout utilisateur authentifié y accède à l'identique — un raffinement possible serait de réserver l'écriture à certains rôles via `requireRole`.
 
 ---
 
@@ -443,11 +455,12 @@ tasks         todos       todo_assignees   evenements
  priority,                                    général / planning / perso
  due_date)
 
-Sans FK (indépendantes) :
-factures (client TEXTE volontairement, montant REAL, statut, dates)
-clients (type_client particulier/entreprise, email, siret...)
-automations (nom, action, actif INTEGER 0/1)
 dossiers (parent_id auto-référence, NULL = racine)
+    ▲ SET NULL
+    │
+clients (type_client particulier/entreprise, email, siret...,
+         dossier_id FK SET NULL → dossiers)   ← sous-dossier auto par client
+
 documents (nom affiché, nom_fichier disque, type, taille, dossier_id)
 ```
 
@@ -455,7 +468,9 @@ Points à savoir dire :
 - Dates stockées en **TEXT** ISO 8601 (`YYYY-MM-DD` ou `YYYY-MM-DDTHH:mm:ss`) : SQLite n'a pas de type date natif ; l'ISO trie correctement en ordre lexicographique et `new Date()` le parse directement côté front.
 - Booléens en **INTEGER 0/1** (pas de type booléen en SQLite).
 - `todo_assignees` = table de jointure **N-N** avec clé primaire composite `(todo_id, assignee_id)` → impossible d'assigner deux fois la même personne.
-- `dossiers.parent_id` = **auto-référence** (self-referencing FK) pour une arborescence de profondeur illimitée.
+- `dossiers.parent_id` = **auto-référence** (self-referencing FK) pour une arborescence de profondeur illimitée. Un dossier racine fixe nommé **"Clients"** y est créé une seule fois (migration 9) pour accueillir tous les sous-dossiers clients sans polluer la racine.
+- `clients.dossier_id → SET NULL` : si le dossier est supprimé indépendamment (rare), le client survit, simplement sans dossier lié.
+- Les tables `factures` et `automations` ont été **retirées** (migration 8) : fonctionnalités hors périmètre pour la soutenance.
 
 ---
 
@@ -497,6 +512,12 @@ Les deux décrivaient la même chose — un créneau daté — et le calendrier 
 **« Comment marchent vos migrations sans outil type Knex/Prisma ? »**
 Chaque migration inspecte le schéma réel (`PRAGMA table_info`, `sqlite_master`) et ne s'exécute que si l'ancien état est détecté, dans une transaction. Idempotent : un redémarrage sur base migrée est un no-op.
 
+**« Pourquoi avoir supprimé Factures et Automations ? »**
+Deux fonctionnalités hors périmètre réel du projet, jamais utilisées et non reliées au reste du modèle (les factures gardaient volontairement le nom du client en texte libre, aucune FK). Les retirer simplifie l'interface (plus d'onglets, `/business` devient `/clients`) et le schéma (migration 8 : `DROP TABLE` sur les deux, idempotente pour les bases déjà déployées).
+
+**« Comment fonctionne le dossier automatique des clients ? »**
+Un dossier racine fixe "Clients" est créé une seule fois au démarrage ; chaque `POST /api/clients` crée, dans la même transaction que le client, un sous-dossier à son nom sous cette racine et lie `dossier_id`. À la suppression, le dossier n'est jamais purgé silencieusement : un premier appel sans paramètre renvoie 409 si un dossier existe, et le frontend affiche une modale pour choisir explicitement entre "client seul" (`?deleteDossier=false`) et "client + dossier" (`?deleteDossier=true`, suppression récursive).
+
 **« Pourquoi Nginx devant le backend ? »**
 Servir les statiques efficacement, régler le routing SPA (`try_files`), et exposer un seul port : le navigateur ne voit qu'une origine, `/api` est proxifié en interne — ce qui simplifie aussi CORS en production.
 
@@ -504,15 +525,15 @@ Servir les statiques efficacement, régler le routing SPA (`try_files`), et expo
 Jamais commité (`.gitignore`) ; `.env.example` documente les variables. Le secret JWT est généré avec `crypto.randomBytes(32)`.
 
 **« Qu'amélioreriez-vous en premier ? »**
-① Corriger le contrôle de rôle sur automations (`requireRole('admin')`) ; ② tests automatisés (Jest/Supertest côté API) ; ③ refresh tokens + cookie httpOnly ; ④ granularité de rôles sur les modules métier (écriture factures réservée à certains rôles, par exemple).
+① Tests automatisés (Jest/Supertest côté API) ; ② refresh tokens + cookie httpOnly ; ③ granularité de rôles sur les modules métier (écriture clients réservée à certains rôles, par exemple) ; ④ renommage manuel du dossier client si le client est renommé (actuellement désynchronisé volontairement).
 
 ---
 
 ## 9. CHIFFRES À RETENIR
 
-- **11 routers** Express, **~32 endpoints**, montés sous `/api/*`
-- **10 tables** SQLite, **7 migrations** idempotentes
-- **8 pages** React (le Dashboard intègre l'espace personnel), **2 contexts** (Auth, Toast), **2 composants** partagés (Tabs, PostItWall)
+- **9 routers** Express, **~26 endpoints**, montés sous `/api/*`
+- **9 tables** SQLite, **9 migrations** idempotentes
+- **7 pages** React (le Dashboard intègre l'espace personnel ; Factures/Automations retirées), **2 contexts** (Auth, Toast), **1 composant** partagé (PostItWall)
 - JWT : **24 h**, bcrypt cost **10**, rate-limit **100 req/15 min/IP**, upload max **50 MB**, todo max **280 caractères**
 - 3 rôles : `employe` < `manager` (son département) < `admin` (tout)
 - Comptes de démo (seed) : mot de passe commun `demo1234`, admin `admin@lexora.fr`
