@@ -194,7 +194,7 @@ function Planning() {
   const { authHeaders } = useAuth();
 
   const load = () =>
-    fetch('/api/planning')
+    fetch('/api/planning', { headers: authHeaders })
       .then(r => r.json())
       .then(data => { setEntries(Array.isArray(data) ? data : []); setLoading(false); })
       .catch(() => { toast('Impossible de charger le planning', 'error'); setLoading(false); });
@@ -216,7 +216,7 @@ function Planning() {
     try {
       await fetch('/api/planning', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ ...form, employe_id: Number(form.employe_id) }),
       });
       setForm(FORM_PLANNING_VIDE);
@@ -231,7 +231,7 @@ function Planning() {
 
   const handleDelete = async id => {
     try {
-      await fetch(`/api/planning/${id}`, { method: 'DELETE' });
+      await fetch(`/api/planning/${id}`, { method: 'DELETE', headers: authHeaders });
       setEntries(prev => prev.filter(e => e.id !== id));
       toast('Entrée supprimée');
     } catch {

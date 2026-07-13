@@ -1,7 +1,11 @@
 import express from 'express';
 import db from '../models/db.js';
+import { verifyJWT, loadUser } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Toutes les routes clients exigent un utilisateur authentifié
+router.use(verifyJWT, loadUser);
 
 // GET — Tous les clients
 router.get('/', (req, res) => {

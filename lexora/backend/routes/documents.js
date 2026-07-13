@@ -18,8 +18,12 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import db from '../models/db.js';
+import { verifyJWT, loadUser } from '../middleware/auth.js';
 
 const router = Router();
+
+// Tout le coffre-fort (dossiers, upload, download) exige un utilisateur authentifié
+router.use(verifyJWT, loadUser);
 
 // __dirname n'existe pas en ES modules, on le recrée manuellement
 const __filename = fileURLToPath(import.meta.url);

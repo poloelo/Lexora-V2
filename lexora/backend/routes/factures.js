@@ -9,8 +9,12 @@
 
 import { Router } from 'express';
 import db from '../models/db.js';
+import { verifyJWT, loadUser } from '../middleware/auth.js';
 
 const router = Router();
+
+// Toutes les routes factures exigent un utilisateur authentifié
+router.use(verifyJWT, loadUser);
 
 // GET — Toutes les factures, de la plus récente à la plus ancienne
 router.get('/', (req, res) => {
