@@ -28,6 +28,31 @@ function checkDepartement(departement_id) {
   return dep ? null : 'departement_id inconnu';
 }
 
+// GET /equipe — Les employés dont on peut consulter le dashboard
+// (manager : les membres de son département, lui exclu ; admin : tout le
+// monde sauf lui). Champs minimaux : id, nom affichable, poste, département.
+router.get('/equipe', requireRole('manager', 'admin'), (req, res) => {
+  try {
+    const where = req.user.role === 'admin'
+      ? 'WHERE e.id != ?'
+      : 'WHERE e.departement_id = ? AND e.id != ?';
+    const params = req.user.role === 'admin'
+      ? [req.user.id]
+      : [req.user.departement_id ?? -1, req.user.id];
+    const equipe = db.prepare(`
+      SELECT e.id, TRIM(COALESCE(e.prenom, '') || ' ' || COALESCE(e.nom, '')) AS nom,
+             e.poste, d.nom AS departement_nom
+      FROM employes e
+      LEFT JOIN departements d ON d.id = e.departement_id
+      ${where}
+      ORDER BY nom ASC
+    `).all(...params);
+    res.json(equipe);
+  } catch {
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // GET /selector — Annuaire minimal pour les sélecteurs d'assignation
 // (tout utilisateur authentifié ; seulement id + nom : minimisation des données)
 router.get('/selector', (req, res) => {
