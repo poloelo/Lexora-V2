@@ -21,13 +21,10 @@ import rateLimit from 'express-rate-limit';
 // ── Import des modules de routes ──────────────────────────────
 import tasksRouter       from './routes/tasks.js';
 import departementsRouter from './routes/departements.js';
-import facturesRouter    from './routes/factures.js';
-import planningRouter    from './routes/planning.js';
 import assistantRouter   from './routes/assistant.js';
 import todosRouter       from './routes/todos.js';
 import clientsRouter     from './routes/clients.js';
 import employesRouter    from './routes/employes.js';
-import automationsRouter from './routes/automations.js';
 import evenementsRouter  from './routes/evenements.js';
 import documentsRouter   from './routes/documents.js';
 import authRouter        from './routes/auth.js';
@@ -79,16 +76,16 @@ app.get('/api/health', (req, res) => {
 });
 
 // ── Montage des routes ────────────────────────────────────────
+// Toutes les routes métier sont protégées par JWT (verifyJWT + loadUser,
+// appliqués dans chaque router). Seuls /api/auth/login et /api/health
+// restent publics : il faut bien pouvoir se connecter.
 app.use('/api/auth',         authRouter);
-app.use('/api/tasks',        tasksRouter);        // Protégé par verifyJWT (tâches de département)
-app.use('/api/departements', departementsRouter); // Protégé par verifyJWT
-app.use('/api/factures',     facturesRouter);
-app.use('/api/planning',     planningRouter);
+app.use('/api/tasks',        tasksRouter);
+app.use('/api/departements', departementsRouter);
 app.use('/api/assistant',    assistantRouter);
-app.use('/api/todos',        todosRouter);        // Protégé par verifyJWT (post-its personnels)
+app.use('/api/todos',        todosRouter);
 app.use('/api/clients',      clientsRouter);
-app.use('/api/employes',    employesRouter);     // Protégé par verifyJWT
-app.use('/api/automations', automationsRouter);  // Protégé par verifyJWT
+app.use('/api/employes',    employesRouter);
 app.use('/api/evenements',  evenementsRouter);
 app.use('/api/documents',   documentsRouter);
 

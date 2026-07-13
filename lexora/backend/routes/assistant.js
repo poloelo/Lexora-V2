@@ -12,8 +12,12 @@
 
 import { Router } from 'express';
 import { chat } from '../services/ollamaService.js';
+import { verifyJWT, loadUser } from '../middleware/auth.js';
 
 const router = Router();
+
+// L'assistant IA exige un utilisateur authentifié (le LLM local a un coût machine)
+router.use(verifyJWT, loadUser);
 
 // POST /api/assistant — Envoie un prompt au LLM et retourne la réponse
 // Corps attendu : { prompt: string }

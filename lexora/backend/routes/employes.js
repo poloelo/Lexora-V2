@@ -29,8 +29,8 @@ function checkDepartement(departement_id) {
 }
 
 // GET /selector — Annuaire minimal pour les sélecteurs d'assignation
-// (manager/admin uniquement ; seulement id + nom : minimisation des données)
-router.get('/selector', requireRole('manager', 'admin'), (req, res) => {
+// (tout utilisateur authentifié ; seulement id + nom : minimisation des données)
+router.get('/selector', (req, res) => {
   try {
     const employes = db.prepare(`
       SELECT id, TRIM(COALESCE(prenom, '') || ' ' || COALESCE(nom, '')) AS nom

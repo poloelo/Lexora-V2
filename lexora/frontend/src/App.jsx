@@ -4,15 +4,16 @@ import { AuthProvider, useAuth } from './contexts/AuthContext.jsx';
 
 import Dashboard       from './pages/Dashboard.jsx';
 import Taches          from './pages/Taches.jsx';
-import ClientsFactures from './pages/ClientsFactures.jsx';
+import Clients         from './pages/Clients.jsx';
 import Calendrier      from './pages/Calendrier.jsx';
 import CoffreFort      from './pages/Coffre_fort.jsx';
 import Assistant       from './pages/Assistant.jsx';
 import Equipe          from './pages/Equipe.jsx';
-import MonEspace       from './pages/MonEspace.jsx';
 import Login           from './pages/Login.jsx';
 
 // ── Gardes de route ───────────────────────────────────────
+// Toute l'API exige désormais un JWT : l'application entière est derrière
+// le login (hors page /login elle-même).
 function PrivateRoute({ children }) {
   const { isAuthenticated } = useAuth();
   return isAuthenticated ? children : <Navigate to="/login" replace />;
@@ -21,18 +22,18 @@ function PrivateRoute({ children }) {
 function AdminRoute({ children }) {
   const { isAuthenticated, user } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (user?.role !== 'admin') return <Navigate to="/mon-espace" replace />;
+  if (user?.role !== 'admin') return <Navigate to="/" replace />;
   return children;
 }
 
 // ── Navigation principale ─────────────────────────────────
 const NAV_PRINCIPAL = [
-  { to: '/',           label: 'Dashboard',          icon: '▦', end: true },
-  { to: '/taches',     label: 'Tâches',             icon: '✓' },
-  { to: '/business',   label: 'Clients & Factures', icon: '€' },
-  { to: '/calendrier', label: 'Calendrier',         icon: '◫' },
-  { to: '/documents',  label: 'Documents',          icon: '📁' },
-  { to: '/assistant',  label: 'Assistant IA',       icon: '◈' },
+  { to: '/',           label: 'Dashboard',    icon: '▦', end: true },
+  { to: '/taches',     label: 'Tâches',       icon: '✓' },
+  { to: '/clients',    label: 'Clients',      icon: '◉' },
+  { to: '/calendrier', label: 'Calendrier',   icon: '◫' },
+  { to: '/documents',  label: 'Documents',    icon: '📁' },
+  { to: '/assistant',  label: 'Assistant IA', icon: '◈' },
 ];
 
 // ── Sidebar ───────────────────────────────────────────────
@@ -65,28 +66,23 @@ function Sidebar() {
       <div className="sidebar-spacer" />
 
       {/* Section utilisateur connecté */}
+      {/* L'espace personnel (post-its, planning) est intégré au Dashboard :
+          seul l'admin a un lien supplémentaire, vers la page Équipe */}
       {isAuthenticated ? (
         <div className="sidebar-admin-section">
-          <span className="sidebar-section-label">
-            {isAdmin ? 'Administration' : 'Mon compte'}
-          </span>
-          <ul>
-            {isAdmin ? (
-              <li>
-                <NavLink to="/equipe">
-                  <span className="nav-icon">◎</span>
-                  Équipe
-                </NavLink>
-              </li>
-            ) : (
-              <li>
-                <NavLink to="/mon-espace">
-                  <span className="nav-icon">◎</span>
-                  Mon espace
-                </NavLink>
-              </li>
-            )}
-          </ul>
+          {isAdmin && (
+            <>
+              <span className="sidebar-section-label">Administration</span>
+              <ul>
+                <li>
+                  <NavLink to="/equipe">
+                    <span className="nav-icon">◎</span>
+                    Équipe
+                  </NavLink>
+                </li>
+              </ul>
+            </>
+          )}
           {/* Carte utilisateur */}
           <div className="sidebar-user-card">
             <div className="sidebar-user-avatar">{nomCourt.charAt(0).toUpperCase()}</div>
@@ -122,12 +118,15 @@ function AppLayout() {
         <Routes>
           <Route path="/"           element={<Dashboard />} />
           <Route path="/taches"     element={<Taches />} />
-          <Route path="/business"   element={<ClientsFactures />} />
+          <Route path="/clients"    element={<Clients />} />
           <Route path="/calendrier" element={<Calendrier />} />
           <Route path="/documents"  element={<CoffreFort />} />
           <Route path="/assistant"  element={<Assistant />} />
           <Route path="/equipe"     element={<AdminRoute><Equipe /></AdminRoute>} />
-          <Route path="/mon-espace" element={<PrivateRoute><MonEspace /></PrivateRoute>} />
+          {/* Ancienne page "Mon espace" fusionnée dans le Dashboard */}
+          <Route path="/mon-espace" element={<Navigate to="/" replace />} />
+          {/* Ancienne page "Clients & Factures" — Factures retirée du périmètre */}
+          <Route path="/business" element={<Navigate to="/clients" replace />} />
         </Routes>
       </main>
     </div>
@@ -141,8 +140,8 @@ export default function App() {
         <Routes>
           {/* Page de login — plein écran, sans sidebar */}
           <Route path="/login" element={<Login />} />
-          {/* Toutes les autres pages — avec sidebar */}
-          <Route path="/*" element={<AppLayout />} />
+          {/* Toutes les autres pages — avec sidebar, connexion requise */}
+          <Route path="/*" element={<PrivateRoute><AppLayout /></PrivateRoute>} />
         </Routes>
       </ToastProvider>
     </AuthProvider>

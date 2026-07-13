@@ -102,21 +102,61 @@ for (const t of TODOS) {
   }
 }
 
-// ── Planning ─────────────────────────────────────────────────
-const PLANNING = [
-  { email: 's.martin@lexora.fr',  date: '2026-07-13', debut: '09:00', fin: '17:00', projet: 'Clôture Q3' },
-  { email: 'j.bernard@lexora.fr', date: '2026-07-13', debut: '10:00', fin: '18:00', projet: 'Migration staging' },
-  { email: 'c.moreau@lexora.fr',  date: '2026-07-14', debut: '09:30', fin: '16:30', projet: null },
-  { email: 't.roux@lexora.fr',    date: '2026-07-15', debut: '09:00', fin: '17:00', projet: 'Salon PME' },
+// ── Événements (calendrier unifié) ───────────────────────────
+// Trois natures illustrées : planning posé par le manager du département
+// (vert, cible un employé), réunion générale (visible par tous, pas de
+// cible) et événement personnel (créé pour soi, visible par son manager).
+const EVENEMENTS = [
+  // Planning (type 'planning', couleur verte imposée, créé par le manager)
+  { titre: 'Clôture Q3',        debut: '2026-07-13T09:00:00', fin: '2026-07-13T17:00:00', type: 'planning', couleur: '#10b981', pour: 's.martin@lexora.fr',  par: 'm.dupont@lexora.fr' },
+  { titre: 'Migration staging', debut: '2026-07-13T10:00:00', fin: '2026-07-15T18:00:00', type: 'planning', couleur: '#10b981', pour: 'j.bernard@lexora.fr', par: 'a.petit@lexora.fr'  },
+  { titre: 'Salon PME',         debut: '2026-07-15T09:00:00', fin: '2026-07-16T17:00:00', type: 'planning', couleur: '#10b981', pour: 't.roux@lexora.fr',    par: 'admin@lexora.fr'    },
+  // Réunion générale — employe_id NULL, visible par tout le monde
+  { titre: 'Réunion mensuelle toute l\'équipe', debut: '2026-07-17T14:00:00', fin: '2026-07-17T15:30:00', type: 'rdv', couleur: '#7c6af7', pour: null, par: 'admin@lexora.fr' },
+  // Événement personnel — créé pour soi, visible par soi + son manager
+  { titre: 'Relancer la mutuelle', debut: '2026-07-16T11:00:00', fin: '2026-07-16T11:30:00', type: 'rappel', couleur: '#f59e0b', pour: 's.martin@lexora.fr', par: 's.martin@lexora.fr' },
 ];
 
-const findPlanning   = db.prepare('SELECT id FROM planning WHERE employe_id = ? AND date = ? AND heure_debut = ?');
-const insertPlanning = db.prepare(
-  'INSERT INTO planning (employe_id, date, heure_debut, heure_fin, projet) VALUES (?, ?, ?, ?, ?)'
+const findEvenement   = db.prepare('SELECT id FROM evenements WHERE titre = ? AND date_debut = ?');
+const insertEvenement = db.prepare(`
+  INSERT INTO evenements (titre, date_debut, date_fin, type, couleur, employe_id, created_by_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+`);
+for (const e of EVENEMENTS) {
+  if (!findEvenement.get(e.titre, e.debut)) {
+    insertEvenement.run(e.titre, e.debut, e.fin, e.type, e.couleur, e.pour ? empId[e.pour] : null, empId[e.par]);
+  }
+}
+
+// ── Clients ────────────────────────────────────────────────
+// Le dossier racine "Clients" est créé par la migration 9 de db.js (elle
+// s'exécute à l'import ci-dessus, avant ce script) : il existe donc déjà.
+// Chaque client de démo reçoit son sous-dossier automatique, comme le fait
+// POST /api/clients en conditions réelles.
+const CLIENTS = [
+  { nom: 'Société Lumina',    email: 'contact@lumina.fr',    telephone: '01 23 45 67 89' },
+  { nom: 'Jean Berthier',     email: 'j.berthier@mail.fr',   telephone: '06 12 34 56 78' },
+  { nom: 'Atelier Verrier',   email: 'contact@atelier-v.fr', telephone: '01 98 76 54 32' },
+];
+
+const clientsRootId = db.prepare(
+  "SELECT id FROM dossiers WHERE nom = 'Clients' AND parent_id IS NULL"
+).get().id;
+
+const findClient   = db.prepare('SELECT id FROM clients WHERE email = ?');
+const insertClient = db.prepare(`
+  INSERT INTO clients (nom, email, telephone) VALUES (?, ?, ?)
+`);
+const insertDossier = db.prepare(
+  'INSERT INTO dossiers (nom, description, parent_id) VALUES (?, ?, ?)'
 );
-for (const p of PLANNING) {
-  if (!findPlanning.get(empId[p.email], p.date, p.debut)) {
-    insertPlanning.run(empId[p.email], p.date, p.debut, p.fin, p.projet);
+const linkDossier = db.prepare('UPDATE clients SET dossier_id = ? WHERE id = ?');
+
+for (const c of CLIENTS) {
+  if (!findClient.get(c.email)) {
+    const { lastInsertRowid: clientId } = insertClient.run(c.nom, c.email, c.telephone);
+    const { lastInsertRowid: dossierId } = insertDossier.run(c.nom, null, clientsRootId);
+    linkDossier.run(dossierId, clientId);
   }
 }
 
@@ -125,4 +165,5 @@ console.log(`   Départements : ${db.prepare('SELECT COUNT(*) AS n FROM departem
 console.log(`   Employés     : ${db.prepare('SELECT COUNT(*) AS n FROM employes').get().n} (mot de passe démo : ${DEMO_PASSWORD})`);
 console.log(`   Tasks        : ${db.prepare('SELECT COUNT(*) AS n FROM tasks').get().n}`);
 console.log(`   Todos        : ${db.prepare('SELECT COUNT(*) AS n FROM todos').get().n}`);
-console.log(`   Planning     : ${db.prepare('SELECT COUNT(*) AS n FROM planning').get().n}`);
+console.log(`   Événements   : ${db.prepare('SELECT COUNT(*) AS n FROM evenements').get().n}`);
+console.log(`   Clients      : ${db.prepare('SELECT COUNT(*) AS n FROM clients').get().n} (chacun avec son dossier dans Clients/)`);

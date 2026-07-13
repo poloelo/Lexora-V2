@@ -8,9 +8,9 @@
  *    se barre et s'estompe ;
  *  - un bouton de suppression, visible uniquement pour le créateur.
  *
- * Création : tout le monde peut se créer un post-it ; un manager ou un admin
- * peut l'assigner à un ou plusieurs employés via le multi-sélecteur (la liste
- * des employés n'est chargée que pour ces rôles — minimisation des données).
+ * Création : tout le monde peut coller un post-it et l'assigner à un ou
+ * plusieurs collègues via le multi-sélecteur (l'annuaire chargé est minimal :
+ * id + nom uniquement — minimisation des données).
  */
 
 import { useEffect, useState } from 'react';
@@ -27,14 +27,12 @@ export default function PostItWall() {
   const toast = useToast();
 
   const [todos, setTodos]         = useState([]);
-  const [employes, setEmployes]   = useState([]);   // Annuaire minimal (manager/admin)
+  const [employes, setEmployes]   = useState([]);   // Annuaire minimal (id + nom)
   const [loading, setLoading]     = useState(true);
   const [content, setContent]     = useState('');
   const [color, setColor]         = useState(COULEURS[0]);
   const [assignees, setAssignees] = useState([]);   // ids sélectionnés
   const [saving, setSaving]       = useState(false);
-
-  const canAssign = user?.role === 'manager' || user?.role === 'admin';
 
   useEffect(() => {
     fetch('/api/todos', { headers: authHeaders })
@@ -42,12 +40,10 @@ export default function PostItWall() {
       .then(data => { setTodos(Array.isArray(data) ? data : []); setLoading(false); })
       .catch(() => { setLoading(false); toast('Impossible de charger les post-its', 'error'); });
 
-    if (canAssign) {
-      fetch('/api/employes/selector', { headers: authHeaders })
-        .then(r => (r.ok ? r.json() : []))
-        .then(data => setEmployes(Array.isArray(data) ? data : []))
-        .catch(() => {});
-    }
+    fetch('/api/employes/selector', { headers: authHeaders })
+      .then(r => (r.ok ? r.json() : []))
+      .then(data => setEmployes(Array.isArray(data) ? data : []))
+      .catch(() => {});
   }, []);
 
   const toggleAssignee = id =>
@@ -59,7 +55,7 @@ export default function PostItWall() {
     setSaving(true);
     try {
       const body = { content: content.trim(), color };
-      if (canAssign && assignees.length > 0) body.assignee_ids = assignees;
+      if (assignees.length > 0) body.assignee_ids = assignees;
       const res = await fetch('/api/todos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -132,7 +128,7 @@ export default function PostItWall() {
             />
           ))}
         </div>
-        {canAssign && employes.length > 0 && (
+        {employes.length > 0 && (
           <div className="postit-assignees">
             <span className="postit-assignees-label">Assigner à :</span>
             {employes.map(e => (

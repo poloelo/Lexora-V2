@@ -17,8 +17,8 @@ export default function Login() {
     setLoading(true);
     try {
       const user = await login(form.email, form.password);
-      // Redirection selon le rôle
-      navigate(user.role === 'admin' ? '/equipe' : '/mon-espace', { replace: true });
+      // Redirection selon le rôle : l'espace personnel est intégré au Dashboard
+      navigate(user.role === 'admin' ? '/equipe' : '/', { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {
