@@ -1,23 +1,22 @@
 /**
- * Calendrier.jsx — Vue calendrier interactif (calendrier unifié)
+ * CalendarBoard.jsx — Calendrier unifié (composant réutilisable)
  *
- * Utilise react-big-calendar avec date-fns comme moteur de dates.
+ * Anciennement la page Calendrier.jsx : le calendrier vit désormais dans
+ * le Dashboard (hub unique). La logique métier est inchangée : une seule
+ * source /api/evenements, le backend applique les règles de visibilité
+ * (général / planning de département / personnel).
  *
- * Depuis la fusion planning/événements, une seule source de données :
- * /api/evenements. Le backend applique les règles de visibilité (général /
- * planning de département / personnel) — le front affiche ce qu'il reçoit.
+ * Deux modes :
+ *  - interactif (défaut) : charge ses données, clic sur créneau → modal
+ *    de création (type "Planning équipe" pour manager/admin avec sélecteur
+ *    d'employé et couleur verte imposée ; palette de couleurs et case
+ *    "personnel" sinon), clic sur événement → détail + suppression selon
+ *    les droits
+ *  - lecture seule (readOnly + events fournis en props) : consultation du
+ *    dashboard d'un employé par son manager — le détail reste consultable
+ *    mais aucune création/suppression n'est possible
  *
- * Fonctionnalités :
- *  - Vues mois / semaine / jour (boutons en haut à droite)
- *  - Clic sur un créneau vide → modal de création :
- *      · tout le monde : événement général, ou personnel (case à cocher),
- *        avec choix de la couleur
- *      · manager/admin : type "Planning" en plus → cible un employé,
- *        couleur verte imposée
- *  - Clic sur un événement existant → modal de détail + suppression
- *    (bouton affiché selon les droits ; le backend reste l'autorité)
- *
- * CSS de react-big-calendar : importé ici, surchargé dans index.css (section .rbc-*)
+ * CSS de react-big-calendar : importé ici, surchargé dans index.css (.rbc-*)
  */
 
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
@@ -31,8 +30,6 @@ import { useToast } from '../contexts/ToastContext.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 // ── Configuration du localizer en français ────────────────
-// Le localizer indique à react-big-calendar comment formater
-// et parser les dates avec la bibliothèque date-fns.
 const localizer = dateFnsLocalizer({
   format,
   parse,
@@ -81,9 +78,26 @@ const FORM_VIDE = {
 };
 
 // ── Helper : convertit une Date JS en valeur datetime-local ──
-// Les <input type="datetime-local"> attendent "YYYY-MM-DDTHH:mm"
 const toDatetimeLocal = date =>
   format(date instanceof Date ? date : new Date(date), "yyyy-MM-dd'T'HH:mm");
+
+// Conversion d'une ligne API → format react-big-calendar { title, start, end }
+const toCalendarEvent = e => ({
+  id:             e.id,
+  // Le planning affiche le nom de l'employé concerné en préfixe
+  title:          e.type === 'planning' && e.employe_nom
+                    ? `${e.employe_nom} — ${e.titre}`
+                    : e.titre,
+  start:          new Date(e.date_debut),
+  end:            new Date(e.date_fin ?? e.date_debut),
+  type:           e.type ?? 'evenement',
+  couleur:        e.couleur,
+  description:    e.description,
+  employe_id:     e.employe_id,
+  employe_nom:    e.employe_nom,
+  created_by_id:  e.created_by_id,
+  created_by_nom: e.created_by_nom,
+});
 
 // ── Composant Modal générique ──────────────────────────────
 // Ferme au clic sur le fond sombre, pas au clic sur le contenu.
@@ -97,54 +111,35 @@ function Modal({ onClose, children }) {
   );
 }
 
-// ── Page principale ────────────────────────────────────────
-export default function Calendrier() {
+// ── Composant principal ────────────────────────────────────
+export default function CalendarBoard({ readOnly = false, events: externalEvents = null }) {
   const { user, authHeaders } = useAuth();
   const toast = useToast();
 
-  // Tous les événements visibles par l'utilisateur
+  // Tous les événements visibles (par l'utilisateur ou par la cible consultée)
   const [events, setEvents]   = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!readOnly);
   // Annuaire minimal pour le sélecteur "planning de qui ?" (manager/admin)
   const [employes, setEmployes] = useState([]);
 
-  // Modal de création : false = fermé, true = ouvert
   const [showCreate, setShowCreate] = useState(false);
-  // Modal de détail : null = fermé, objet événement = ouvert
   const [detail, setDetail]         = useState(null);
-
-  const [form, setForm]     = useState(FORM_VIDE);
-  const [saving, setSaving] = useState(false);
+  const [form, setForm]             = useState(FORM_VIDE);
+  const [saving, setSaving]         = useState(false);
 
   // Manager/admin : peuvent poser du planning sur un employé
-  const canPlan = user?.role === 'manager' || user?.role === 'admin';
+  const canPlan = !readOnly && (user?.role === 'manager' || user?.role === 'admin');
 
-  // ── Chargement des données ──────────────────────────────
-  // Une seule source : le backend renvoie déjà les événements filtrés
-  // selon la visibilité (général / planning du département / personnel).
+  // En lecture seule, les données viennent des props (dashboard consulté)
+  useEffect(() => {
+    if (readOnly) setEvents((Array.isArray(externalEvents) ? externalEvents : []).map(toCalendarEvent));
+  }, [readOnly, externalEvents]);
+
   const loadEvents = async () => {
     try {
       const data = await fetch('/api/evenements', { headers: authHeaders })
         .then(r => (r.ok ? r.json() : []));
-
-      // Conversion au format react-big-calendar : { title, start: Date, end: Date }
-      const evts = (Array.isArray(data) ? data : []).map(e => ({
-        id:             e.id,
-        // Le planning affiche le nom de l'employé concerné en préfixe
-        title:          e.type === 'planning' && e.employe_nom
-                          ? `${e.employe_nom} — ${e.titre}`
-                          : e.titre,
-        start:          new Date(e.date_debut),
-        end:            new Date(e.date_fin ?? e.date_debut),
-        type:           e.type ?? 'evenement',
-        couleur:        e.couleur,
-        description:    e.description,
-        employe_id:     e.employe_id,
-        employe_nom:    e.employe_nom,
-        created_by_id:  e.created_by_id,
-        created_by_nom: e.created_by_nom,
-      }));
-      setEvents(evts);
+      setEvents((Array.isArray(data) ? data : []).map(toCalendarEvent));
     } catch {
       toast('Impossible de charger les événements', 'error');
     } finally {
@@ -153,6 +148,7 @@ export default function Calendrier() {
   };
 
   useEffect(() => {
+    if (readOnly) return;    // Pas de fetch : les données sont passées en props
     loadEvents();
     if (canPlan) {
       fetch('/api/employes/selector', { headers: authHeaders })
@@ -160,10 +156,9 @@ export default function Calendrier() {
         .then(data => setEmployes(Array.isArray(data) ? data : []))
         .catch(() => {});
     }
-  }, []);
+  }, [readOnly]);
 
   // ── Clic sur un créneau vide → ouvre le formulaire ──────
-  // react-big-calendar passe { start, end } comme objets Date
   const handleSelectSlot = ({ start, end }) => {
     // En vue "mois", end est minuit du lendemain → on force 1h après le début
     const endCorrige = end <= start
@@ -178,7 +173,6 @@ export default function Calendrier() {
     setShowCreate(true);
   };
 
-  // ── Clic sur un événement existant → ouvre le détail ────
   const handleSelectEvent = event => setDetail(event);
 
   // ── Création d'un événement ──────────────────────────────
@@ -225,12 +219,12 @@ export default function Calendrier() {
   // ── Droits de suppression (miroir du backend, pour l'affichage) ──
   // Le backend reste l'autorité : ici on ne fait que cacher le bouton.
   const canDelete = event => {
+    if (readOnly) return false;   // Consultation : aucune action
     if (user?.role === 'admin') return true;
     if (event.type === 'planning') return user?.role === 'manager';
     return event.created_by_id === user?.id;
   };
 
-  // ── Suppression d'un événement ───────────────────────────
   const handleDelete = async event => {
     try {
       const res = await fetch(`/api/evenements/${event.id}`, {
@@ -249,8 +243,6 @@ export default function Calendrier() {
   };
 
   // ── Couleur dynamique par événement ──────────────────────
-  // La couleur vient de la base (choisie à la création) ; les couleurs
-  // par type ne servent que de repli pour les anciens événements.
   const eventPropGetter = event => {
     const bg = event.couleur ?? TYPE_COULEURS[event.type]?.bg ?? TYPE_COULEURS.evenement.bg;
     return {
@@ -266,25 +258,15 @@ export default function Calendrier() {
   };
 
   return (
-    <div className="page-enter">
-
-      {/* En-tête : titre + légende des couleurs */}
-      <div className="cal-header">
-        <div>
-          <h1>Calendrier</h1>
-          <p className="page-subtitle">
-            Cliquez sur un créneau pour créer un événement
-            {canPlan && ' — ou un créneau de planning pour votre équipe'}
-          </p>
-        </div>
-        <div className="cal-legend">
-          {Object.entries(TYPE_COULEURS).map(([type, { bg, label }]) => (
-            <span key={type} className="cal-legend-item">
-              <span className="cal-legend-dot" style={{ background: bg }} />
-              {label}
-            </span>
-          ))}
-        </div>
+    <div>
+      {/* Légende des couleurs par type */}
+      <div className="cal-legend" style={{ marginBottom: 10 }}>
+        {Object.entries(TYPE_COULEURS).map(([type, { bg, label }]) => (
+          <span key={type} className="cal-legend-item">
+            <span className="cal-legend-dot" style={{ background: bg }} />
+            {label}
+          </span>
+        ))}
       </div>
 
       {/* Calendrier principal */}
@@ -300,13 +282,13 @@ export default function Calendrier() {
             startAccessor="start"
             endAccessor="end"
             titleAccessor="title"
-            style={{ height: 680 }}
+            style={{ height: 620 }}
             culture="fr"
             messages={MESSAGES_FR}
             views={['month', 'week', 'day']}
             defaultView="week"
-            selectable              // Active la sélection de créneaux
-            onSelectSlot={handleSelectSlot}
+            selectable={!readOnly}   // La sélection de créneaux crée un événement
+            onSelectSlot={readOnly ? undefined : handleSelectSlot}
             onSelectEvent={handleSelectEvent}
             eventPropGetter={eventPropGetter}
             step={30}               // Pas de 30 minutes en vue semaine/jour
@@ -316,7 +298,7 @@ export default function Calendrier() {
         </div>
       )}
 
-      {/* ── Modal : Créer un événement ──────────────────── */}
+      {/* ── Modal : Créer un événement (mode interactif) ── */}
       {showCreate && (
         <Modal onClose={() => setShowCreate(false)}>
           <div className="modal-header">
@@ -448,11 +430,10 @@ export default function Calendrier() {
         </Modal>
       )}
 
-      {/* ── Modal : Détail d'un événement ──────────────── */}
+      {/* ── Modal : Détail d'un événement (consultable même en lecture seule) ── */}
       {detail && (
         <Modal onClose={() => setDetail(null)}>
           <div className="modal-header">
-            {/* Pastille colorée + titre */}
             <span className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span
                 style={{

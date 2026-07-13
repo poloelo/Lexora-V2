@@ -27,6 +27,7 @@ import clientsRouter     from './routes/clients.js';
 import employesRouter    from './routes/employes.js';
 import evenementsRouter  from './routes/evenements.js';
 import documentsRouter   from './routes/documents.js';
+import dashboardRouter   from './routes/dashboard.js';
 import authRouter        from './routes/auth.js';
 
 const app  = express();
@@ -88,6 +89,7 @@ app.use('/api/clients',      clientsRouter);
 app.use('/api/employes',    employesRouter);
 app.use('/api/evenements',  evenementsRouter);
 app.use('/api/documents',   documentsRouter);
+app.use('/api/dashboard',   dashboardRouter);  // Consultation lecture seule (manager/admin)
 
 // ── Démarrage du serveur ──────────────────────────────────────
 app.listen(PORT, () => {
