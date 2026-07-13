@@ -9,14 +9,14 @@
 
 ### 1.1 Qu'est-ce que Lexora ?
 
-Un **ERP full-stack pour petites équipes** : dashboard KPI, tâches de département (kanban), post-its personnels, CRM clients (avec dossier documentaire dédié par client), calendrier, coffre-fort documentaire, assistant IA local, et panneau admin (employés). Le planning des employés vit dans le calendrier unifié (événements de type « planning » posés par les managers). Les modules Factures et Automations, non utilisés, ont été retirés du périmètre avant la soutenance.
+Un **ERP full-stack pour petites équipes** organisé autour d'un **dashboard hub unique** : post-its personnels, kanban des tâches de département et calendrier unifié y sont empilés sur une seule page. S'y ajoutent un CRM clients (avec dossier documentaire dédié par client), un coffre-fort documentaire, un assistant IA local, et une page Équipe (admin : gestion des employés ; manager : **consultation en lecture seule du dashboard de chaque membre de son département**). Le planning des employés vit dans le calendrier (événements « planning » posés par les managers). Les modules Factures et Automations, non utilisés, ont été retirés du périmètre avant la soutenance.
 
 ### 1.2 Stack technique et justification des choix
 
 | Couche | Techno | Pourquoi ce choix |
 |---|---|---|
 | Frontend | **React 18 + Vite** | SPA à composants réutilisables ; Vite = démarrage/build très rapides (vs CRA/Webpack), proxy dev intégré |
-| Routing front | **react-router-dom v6** | Navigation côté client sans rechargement, gardes de route (`PrivateRoute`, `AdminRoute`) |
+| Routing front | **react-router-dom v6** | Navigation côté client sans rechargement, gardes de route (`PrivateRoute`, `ManagerRoute`) |
 | Calendrier | **react-big-calendar + date-fns** | Composant calendrier mature (vues mois/semaine/jour) ; date-fns est léger et modulaire (vs moment.js, lourd et déprécié) |
 | Backend | **Node.js 18 + Express 4** | Même langage front/back (JS), Express = standard minimaliste pour des API REST |
 | Base de données | **SQLite via better-sqlite3** | Application mono-process, petite équipe : pas besoin d'un serveur DB séparé. `better-sqlite3` a une **API synchrone** qui simplifie les routes (pas de callbacks/promesses) sans perte de perf à cette échelle |
@@ -92,7 +92,7 @@ Lexora-V2/
 │
 └── lexora/
     ├── backend/                          ◄── API REST Express
-    │   ├── index.js                      # POINT D'ENTRÉE : middlewares globaux + montage des 9 routers
+    │   ├── index.js                      # POINT D'ENTRÉE : middlewares globaux + montage des 10 routers
     │   ├── env.js                        # Charge .env (dotenv) — importé EN PREMIER dans index.js
     │   ├── middleware/
     │   │   └── auth.js                   # MIDDLEWARES : verifyJWT, loadUser, requireRole
@@ -105,13 +105,17 @@ Lexora-V2/
     │   │   ├── tasks.js                  # Tâches de département (kanban) — protégé JWT + rôles
     │   │   ├── todos.js                  # Post-its personnels — protégé JWT, règles créateur/assigné
     │   │   ├── departements.js           # Référentiel départements — lecture authentifiée, écriture admin
-    │   │   ├── employes.js               # Annuaire employés — admin (+ /selector pour manager)
+    │   │   ├── employes.js               # Annuaire employés — admin (+ /selector pour tous,
+    │   │   │                             #  /equipe pour manager/admin)
     │   │   ├── clients.js                # CRM clients — protégé JWT ; crée/gère le sous-dossier
     │   │   │                             #  automatique de chaque client dans le Coffre-fort
     │   │   ├── evenements.js             # Calendrier unifié (général / planning / personnel)
     │   │   │                             #  avec règles de visibilité par rôle — protégé JWT
     │   │   ├── documents.js              # Coffre-fort : dossiers + upload/download Multer — protégé JWT
-    │   │   └── assistant.js              # POST → proxy vers ollamaService.chat() — protégé JWT
+    │   │   ├── assistant.js              # POST → proxy vers ollamaService.chat() — protégé JWT
+    │   │   └── dashboard.js              # GET /:userId — dashboard d'un employé en LECTURE SEULE
+    │   │                                 #  (manager de son département / admin), réagrège les
+    │   │                                 #  requêtes exportées par todos/tasks/evenements
     │   ├── scripts/seed.js               # Données de démo idempotentes (mdp commun : demo1234)
     │   └── uploads/                      # Fichiers physiques uploadés (volume Docker en prod)
     │
@@ -125,20 +129,22 @@ Lexora-V2/
             ├── contexts/
             │   ├── AuthContext.jsx       # État global auth : token, user, login(), logout(), authHeaders
             │   └── ToastContext.jsx      # Notifications toast globales (useToast)
-            ├── components/
-            │   └── PostItWall.jsx        # Mur de post-its (todos) avec toggle optimiste
+            ├── components/               # Briques réutilisées par le Dashboard (2 modes :
+            │   │                         #  interactif, ou lecture seule via props)
+            │   ├── PostItWall.jsx        # Mur de post-its (todos) avec toggle optimiste
+            │   ├── TaskBoard.jsx         # Kanban 3 colonnes, drag & drop HTML5, modal création
+            │   └── CalendarBoard.jsx     # react-big-calendar, création planning (manager),
+            │                             #  choix de couleur, case "personnel"
             └── pages/                    # 1 fichier = 1 écran de la sidebar
-                ├── Dashboard.jsx         # Accueil unifié : KPI animés (useCountUp) + post-its
-                │                         #  + planning personnel + listes récentes
-                │                         #  (fusion de l'ancienne page "Mon espace")
-                ├── Taches.jsx            # Kanban 3 colonnes, drag & drop HTML5
+                ├── Dashboard.jsx         # HUB UNIQUE : header → post-its → kanban → calendrier
+                │                         #  (anciennes pages Tâches et Calendrier déplacées ici) ;
+                │                         #  mode consultation lecture seule via prop targetUser
                 ├── Clients.jsx           # CRM clients : liste, création (+ dossier auto), lien
                 │                         #  "Voir le dossier", modale de suppression à 2 choix
-                ├── Calendrier.jsx        # react-big-calendar, source unique /api/evenements,
-                │                         #  création planning (manager) + choix de couleur
                 ├── Coffre_fort.jsx       # Arborescence, drag & drop upload, fil d'Ariane
                 ├── Assistant.jsx         # Chat avec le LLM
-                ├── Equipe.jsx            # ADMIN : répertoire des employés (page simple, sans onglets)
+                ├── Equipe.jsx            # Manager/admin : dashboards de l'équipe (lecture seule) ;
+                │                         #  admin : + répertoire des employés
                 └── Login.jsx             # Formulaire de connexion
 ```
 
@@ -183,6 +189,8 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 | `DELETE /api/documents/:id` | documents.js | verifyJWT, loadUser | documents + disque | `{ message }` |
 | `GET/POST/DELETE /api/documents/dossiers` | documents.js | verifyJWT, loadUser | dossiers (+ récursion) | CRUD |
 | `POST /api/assistant` | assistant.js | verifyJWT, loadUser | — (appelle ollamaService.chat) | `{ response }` ou 500 |
+| `GET /api/employes/equipe` | employes.js | + requireRole(manager, admin) | employes ⋈ departements | Employés consultables (manager : son département sans lui ; admin : tous) |
+| `GET /api/dashboard/:userId` | dashboard.js | verifyJWT, loadUser + garde manager-du-département/admin | réutilise getTodosOfUser, getTasksOfDepartment, getEventsVisibleBy | `{ user, todos, tasks, evenements }` — **lecture seule**, 403 sinon |
 
 > **À retenir** : toute l'API métier exige un JWT (`router.use(verifyJWT, loadUser)` en tête de chaque router). Seuls `POST /api/auth/login` et `GET /api/health` sont publics — il faut bien pouvoir se connecter, et la sonde de santé sert au monitoring.
 
@@ -190,15 +198,15 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 
 | Page (route) | Composants utilisés | Appels API (fetch) | Hooks / state clés |
 |---|---|---|---|
-| `App.jsx` (racine) | Sidebar, AuthProvider, ToastProvider, garde AdminRoute | — | `useAuth` pour la garde et la carte utilisateur ; `/mon-espace` redirige vers `/` (fusion) |
+| `App.jsx` (racine) | Sidebar, AuthProvider, ToastProvider, garde ManagerRoute (Équipe) | — | `useAuth` pour la garde et la carte utilisateur ; redirections héritées : `/mon-espace`, `/taches`, `/calendrier` → `/`, `/business` → `/clients` |
 | `Login.jsx` (`/login`) | — | `POST /api/auth/login` (via `login()` du AuthContext) | `form`, `error`, `loading` ; `useNavigate` : admin → `/equipe`, sinon → `/` |
-| `Dashboard.jsx` (`/`) | StatCard (avec hook `useCountUp`), RecentItem, **PostItWall** | `GET /api/tasks`, `GET /api/evenements` — en `Promise.all` ; « Mon planning » = événements filtrés par `employe_id === user.id` | `taches`, `planning`, `filtre`, `loading` ; KPI (tâches totales / en cours) par `filter` ; sections personnelles (post-its, planning) rendues seulement si `isAuthenticated` |
-| `Taches.jsx` (`/taches`) | TaskCard (draggable) | `GET /api/tasks?department_id=`, `GET /api/departements`, `POST /api/tasks`, `PATCH /api/tasks/:id/status`, `DELETE /api/tasks/:id` | `tasks`, `prioFilter`, `depFilter`, `modalOpen`, `form` ; **update optimiste** sur le statut |
+| `Dashboard.jsx` (`/`) | **PostItWall + TaskBoard + CalendarBoard** empilés | mode personnel : chaque section fetch ses données ; mode consultation : un seul `GET /api/dashboard/:userId` distribué aux 3 sections via props | `targetUser`/`onBack` (consultation), `data`, `loading` ; `readOnly = !!targetUser` coupe toutes les actions |
 | `Clients.jsx` (`/clients`) | — (page simple, sans onglets) | `GET/POST/DELETE /api/clients` | `clients`, `form`, `search`, `confirmDelete` (modale à 2 choix) ; bouton « Voir le dossier » → `navigate('/documents?dossier=' + id)` |
-| `Calendrier.jsx` (`/calendrier`) | `<Calendar>` (react-big-calendar), Modal | `GET /api/evenements` (source unique, déjà filtrée par le backend), `GET /api/employes/selector` (manager/admin), `POST /api/evenements`, `DELETE /api/evenements/:id` | `events` convertis au format `{title, start, end}`, `showCreate`, `detail`, `form` (type, couleur, employé ciblé, case « personnel ») |
+| `TaskBoard.jsx` (composant du Dashboard) | TaskCard (draggable) | interactif : `GET /api/tasks?department_id=`, `GET /api/departements`, `POST /api/tasks`, `PATCH /api/tasks/:id/status`, `DELETE /api/tasks/:id` ; readOnly : données en props | `tasks`, `prioFilter`, `depFilter`, `modalOpen`, `form` ; **update optimiste** sur le statut ; readOnly → badge statique, ni drag ni delete |
+| `CalendarBoard.jsx` (composant du Dashboard) | `<Calendar>` (react-big-calendar), Modal | interactif : `GET /api/evenements`, `GET /api/employes/selector` (manager/admin), `POST/DELETE /api/evenements` ; readOnly : données en props | `events` convertis au format `{title, start, end}`, `showCreate`, `detail`, `form` ; readOnly → `selectable=false`, détail consultable sans suppression |
 | `Coffre_fort.jsx` (`/documents`) | — (tout interne) | `GET /api/documents/dossiers`, `GET /api/documents`, `POST .../dossiers`, `POST .../upload` (FormData), `GET .../:id/download`, `DELETE` | `currentFolderId` (navigation, initialisé depuis `?dossier=` si présent via `useSearchParams`), `dossiers`, `documents`, `dragActive` ; fil d'Ariane recalculé |
 | `Assistant.jsx` (`/assistant`) | — | `POST /api/assistant { prompt }` | `messages` (tableau {role, text, time}), `input`, `loading` ; auto-scroll via `useRef` |
-| `Equipe.jsx` (`/equipe`, **AdminRoute**) | — (page simple, sans onglets) | `GET/POST/DELETE /api/employes`, `GET /api/departements` | `employes`, `departements`, `form`, `search` ; headers admin = `authHeaders` ; planning et automations retirés du périmètre |
+| `Equipe.jsx` (`/equipe`, **ManagerRoute**) | DashboardsEquipe + (admin) Employes + **Dashboard en mode targetUser** | `GET /api/employes/equipe` ; admin : `GET/POST/DELETE /api/employes`, `GET /api/departements` | `selected` (employé consulté → rend `<Dashboard targetUser>` avec bouton retour) ; le répertoire de gestion reste admin-only |
 | `PostItWall.jsx` (composant, rendu dans Dashboard) | — | `GET/POST/DELETE /api/todos`, `PATCH /api/todos/:id/toggle`, `GET /api/employes/selector` | `todos`, `content`, `color`, `assignees` ; **toggle optimiste avec rollback** |
 
 **Modèle mental à réciter** : *chaque page suit le même cycle : `useEffect` au montage → `fetch` → `setState` → rendu conditionnel (skeleton pendant `loading`, empty-state si vide, données sinon). Les mutations mettent à jour l'état local directement (ou rechargent via `load()`), et affichent un toast.*
@@ -351,11 +359,11 @@ Chaque client a un sous-dossier dédié dans le coffre-fort, rangé sous un doss
 
 ### 4.9 Frontend — Patterns à expliquer
 
-**Update optimiste avec rollback** (Taches.jsx `changeStatus`, PostItWall.jsx `toggle`)
+**Update optimiste avec rollback** (TaskBoard.jsx `changeStatus`, PostItWall.jsx `toggle`)
 - **Étapes** : ① sauvegarder l'état courant dans une variable (`const previous = tasks`) → ② appliquer le changement localement **tout de suite** (`setTasks(...)`) → ③ appeler l'API → ④ si erreur : restaurer `previous` + toast d'erreur.
 - **Pourquoi** : l'interface répond instantanément (une carte kanban qu'on dépose ne doit pas « laguer » le temps d'un aller-retour réseau) tout en restant cohérente avec le serveur en cas d'échec (droits insuffisants, réseau).
 
-**Drag & drop natif HTML5** (Taches.jsx)
+**Drag & drop natif HTML5** (TaskBoard.jsx)
 - Carte : `draggable` + `onDragStart` → `e.dataTransfer.setData('text/task-id', id)`.
 - Colonne : `onDragOver` avec `e.preventDefault()` (**obligatoire**, sinon le navigateur interdit le drop) + `onDrop` → relit l'id, retrouve la tâche, appelle `changeStatus`.
 - Un `<select>` de secours sur chaque carte fait la même action — accessibilité + écrans tactiles.
@@ -364,7 +372,7 @@ Chaque client a un sous-dossier dédié dans le coffre-fort, rangé sous un doss
 - Anime un compteur de l'ancienne valeur vers `target` via `requestAnimationFrame` : à chaque frame, calcule `progress` (0→1), applique un easing cubique (`1 - (1-p)³` : rapide au début, doux à la fin), `setValue(arrondi)`.
 - `useRef(prev)` retient la dernière valeur atteinte **sans déclencher de re-render** — c'est exactement le cas d'usage de useRef vs useState.
 
-**Calendrier unifié** (Calendrier.jsx `loadEvents` + modal de création)
+**Calendrier unifié** (CalendarBoard.jsx `loadEvents` + modal de création)
 - **Une seule source** : `/api/evenements`. Le backend renvoie déjà la liste filtrée selon la visibilité de l'utilisateur — le front ne fait que convertir au format react-big-calendar `{ title, start: Date, end: Date }` (le planning affiche « Nom de l'employé — Titre »).
 - Modal de création à géométrie variable : manager/admin voient l'option type « Planning (équipe) » qui remplace la palette de couleurs par un sélecteur d'employé (couleur verte imposée par le backend) ; les autres types offrent le **choix de couleur** (pastilles, comme les post-its — le vert en est exclu, réservé au planning) et une case « Événement personnel » qui envoie `employe_id = user.id`.
 - `eventPropGetter` colore chaque événement avec `event.couleur` venant de la base (les couleurs par type ne servent que de repli et de légende).
@@ -524,6 +532,9 @@ Servir les statiques efficacement, régler le routing SPA (`try_files`), et expo
 **« Où est le fichier .env ? »**
 Jamais commité (`.gitignore`) ; `.env.example` documente les variables. Le secret JWT est généré avec `crypto.randomBytes(32)`.
 
+**« Pourquoi un dashboard hub unique, et comment marche la consultation manager ? »**
+Trois pages (Dashboard, Tâches, Calendrier) affichaient l'espace de travail d'une même personne : on les a empilées en une seule — moins de navigation, et les composants extraits (TaskBoard, CalendarBoard, PostItWall) ont chacun un mode lecture seule activé par props. La consultation manager réutilise exactement le même composant Dashboard avec une prop `targetUser` : les données viennent alors d'un unique `GET /api/dashboard/:userId`, gardé côté serveur (manager du département de la cible ou admin, sinon 403), et **aucune route d'écriture "pour le compte de" n'existe** — la lecture seule n'est pas qu'un choix d'interface, c'est une absence d'API.
+
 **« Qu'amélioreriez-vous en premier ? »**
 ① Tests automatisés (Jest/Supertest côté API) ; ② refresh tokens + cookie httpOnly ; ③ granularité de rôles sur les modules métier (écriture clients réservée à certains rôles, par exemple) ; ④ renommage manuel du dossier client si le client est renommé (actuellement désynchronisé volontairement).
 
@@ -531,9 +542,9 @@ Jamais commité (`.gitignore`) ; `.env.example` documente les variables. Le secr
 
 ## 9. CHIFFRES À RETENIR
 
-- **9 routers** Express, **~26 endpoints**, montés sous `/api/*`
+- **10 routers** Express, **~28 endpoints**, montés sous `/api/*`
 - **9 tables** SQLite, **9 migrations** idempotentes
-- **7 pages** React (le Dashboard intègre l'espace personnel ; Factures/Automations retirées), **2 contexts** (Auth, Toast), **1 composant** partagé (PostItWall)
+- **6 pages** React (le Dashboard est le hub : post-its + kanban + calendrier), **2 contexts** (Auth, Toast), **3 composants** partagés à double mode interactif/lecture seule (PostItWall, TaskBoard, CalendarBoard)
 - JWT : **24 h**, bcrypt cost **10**, rate-limit **100 req/15 min/IP**, upload max **50 MB**, todo max **280 caractères**
 - 3 rôles : `employe` < `manager` (son département) < `admin` (tout)
 - Comptes de démo (seed) : mot de passe commun `demo1234`, admin `admin@lexora.fr`
