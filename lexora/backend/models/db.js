@@ -69,8 +69,9 @@ const TODO_ASSIGNEES_SCHEMA = `
 //    la vie du todo et de l'employé (RGPD : supprimer un employé purge ses assignations).
 //  - employes.departement_id → SET NULL : supprimer un département ne doit pas
 //    supprimer les employés, ils deviennent simplement "sans département".
-//  - planning.employe_id  → CASCADE  : un créneau sans employé n'a pas de sens,
-//    et la suppression d'un employé purge ses données de planning (RGPD).
+//  - evenements.employe_id → CASCADE : le planning et les événements personnels
+//    d'un employé parti sont purgés (RGPD) ; created_by_id → SET NULL :
+//    l'événement général survit à son créateur, anonymisé.
 db.exec(`
   -- ── Départements ───────────────────────────────────────────
   -- Référentiel des départements de l'entreprise. Les employés et les
@@ -137,18 +138,6 @@ db.exec(`
     date_echeance  TEXT             -- Format : "YYYY-MM-DD"
   );
 
-  -- ── Planning des employés ──────────────────────────────────
-  -- Représente un créneau de travail : qui, quand, de quelle heure à quelle heure.
-  -- Ces entrées apparaissent aussi dans le calendrier (vue verte "Planning").
-  CREATE TABLE IF NOT EXISTS planning (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    employe_id  INTEGER REFERENCES employes(id) ON DELETE CASCADE,
-    date        TEXT NOT NULL,       -- Format : "YYYY-MM-DD"
-    heure_debut TEXT NOT NULL,       -- Format : "HH:mm"
-    heure_fin   TEXT NOT NULL,       -- Format : "HH:mm"
-    projet      TEXT                 -- Optionnel : nom du projet associé
-  );
-
   -- ── Clients ────────────────────────────────────────────────
   -- Gère deux types : 'particulier' (nom + prénom) et 'entreprise' (raison sociale + SIRET).
   CREATE TABLE IF NOT EXISTS clients (
@@ -183,23 +172,30 @@ db.exec(`
     created_at  TEXT DEFAULT (datetime('now'))
   );
 
-  -- ── Événements du calendrier ───────────────────────────────
+  -- ── Événements du calendrier (calendrier unifié) ───────────
+  -- Depuis la fusion planning/événements, cette table porte trois usages :
+  --  1. Événement général  (employe_id NULL)           : visible par tous
+  --  2. Planning           (type 'planning' + employe_id) : posé par le manager
+  --     du département de l'employé ciblé, visible par tout son département,
+  --     toujours vert (#10b981)
+  --  3. Événement personnel (employe_id = soi-même)    : visible par son
+  --     créateur et par le manager de son département
   -- Types valides : 'rdv' | 'tache' | 'rappel' | 'evenement' | 'planning'
-  -- couleur : code hexadécimal CSS (ex : '#7c6af7')
+  -- couleur : code hexadécimal CSS (ex : '#7c6af7'), choisie par l'utilisateur
   -- Les dates sont stockées en ISO 8601 : "2026-05-20T09:00:00"
-  -- NB : created_by reste en texte brut (champ purement informatif, la
-  -- correspondance par nom vers employes serait trop peu fiable pour migrer
-  -- sans risque de corruption). Candidat à une future migration vers une FK.
+  -- ON DELETE : employe_id CASCADE (RGPD : le planning d'un employé parti est
+  -- purgé) ; created_by_id SET NULL (l'événement survit, anonymisé).
   CREATE TABLE IF NOT EXISTS evenements (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    titre       TEXT NOT NULL,
-    description TEXT,
-    date_debut  TEXT NOT NULL,       -- ISO 8601 : "YYYY-MM-DDTHH:mm:ss"
-    date_fin    TEXT,                -- Si null en DB, le backend défaut à date_debut
-    type        TEXT DEFAULT 'evenement',
-    couleur     TEXT DEFAULT '#7c6af7',
-    created_by  TEXT,
-    created_at  TEXT DEFAULT (datetime('now'))
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    titre         TEXT NOT NULL,
+    description   TEXT,
+    date_debut    TEXT NOT NULL,     -- ISO 8601 : "YYYY-MM-DDTHH:mm:ss"
+    date_fin      TEXT,              -- Si null en DB, le backend défaut à date_debut
+    type          TEXT DEFAULT 'evenement',
+    couleur       TEXT DEFAULT '#7c6af7',
+    employe_id    INTEGER REFERENCES employes(id) ON DELETE CASCADE,
+    created_by_id INTEGER REFERENCES employes(id) ON DELETE SET NULL,
+    created_at    TEXT DEFAULT (datetime('now'))
   );
 
   -- ── Coffre-fort : dossiers ─────────────────────────────────
@@ -339,6 +335,9 @@ if (tableExists('taches')) {
 // "Nom Prénom" ou "Nom" seul). Par prudence, la colonne texte n'est
 // supprimée que si TOUTES les lignes ont pu être appariées : sinon elle est
 // conservée et la migration se retentera au prochain démarrage (idempotent).
+// NB : conservée bien que la table planning soit fusionnée dans evenements
+// (migration 7) — sur une très vieille base, elle s'exécute AVANT la fusion
+// pour que les créneaux soient migrés avec leur clé étrangère.
 if (tableColumns('planning').includes('employe')) {
   const dropped = db.transaction(() => {
     if (!tableColumns('planning').includes('employe_id')) {
@@ -365,6 +364,48 @@ if (tableColumns('planning').includes('employe')) {
     return false;
   })();
   if (dropped) console.log('✅ Migration : planning.employe → employe_id (FK)');
+}
+
+// ── Migration 6 : evenements — colonnes employe_id / created_by_id ──
+// Prépare le calendrier unifié : l'événement peut cibler un employé
+// (planning, événement personnel) et connaît son créateur par FK.
+// L'ancienne colonne created_by (texte libre, purement informative) est
+// supprimée : la correspondance par nom serait trop peu fiable pour être
+// migrée sans risque, et le champ n'était exploité nulle part.
+{
+  const cols = tableColumns('evenements');
+  if (!cols.includes('employe_id')) {
+    db.exec('ALTER TABLE evenements ADD COLUMN employe_id INTEGER REFERENCES employes(id) ON DELETE CASCADE');
+    db.exec('ALTER TABLE evenements ADD COLUMN created_by_id INTEGER REFERENCES employes(id) ON DELETE SET NULL');
+    console.log('✅ Migration : evenements.employe_id / created_by_id (FK)');
+  }
+  if (cols.includes('created_by')) {
+    db.exec('ALTER TABLE evenements DROP COLUMN created_by');
+    console.log('✅ Migration : evenements.created_by (texte) supprimé');
+  }
+}
+
+// ── Migration 7 : fusion planning → evenements ──
+// Chaque créneau devient un événement de type 'planning' (vert) ciblant
+// l'employé : date + heures séparées sont concaténées en ISO 8601.
+// Les éventuels créneaux sans employé (vieilles bases partiellement
+// appariées) sont conservés en événements généraux plutôt que perdus.
+if (tableExists('planning')) {
+  db.transaction(() => {
+    db.prepare(`
+      INSERT INTO evenements (titre, date_debut, date_fin, type, couleur, employe_id)
+      SELECT
+        COALESCE(NULLIF(TRIM(projet), ''), 'Créneau de travail'),
+        date || 'T' || heure_debut,
+        date || 'T' || heure_fin,
+        'planning',
+        '#10b981',
+        employe_id
+      FROM planning
+    `).run();
+    db.exec('DROP TABLE planning');
+  })();
+  console.log('✅ Migration : planning → evenements (calendrier unifié)');
 }
 
 // Seed : créer un compte admin depuis les variables d'env s'il n'en existe aucun

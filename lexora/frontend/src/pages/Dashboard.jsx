@@ -82,15 +82,24 @@ const STATUT_FACTURE = {
 const fmtDate = d =>
   d ? new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) : '—';
 
-// Prend "09:00" et "17:30" → renvoie "8h30"
-function calculerDuree(debut, fin) {
-  if (!debut || !fin) return null;
-  const [h1, m1] = debut.split(':').map(Number);
-  const [h2, m2] = fin.split(':').map(Number);
-  const total = (h2 * 60 + m2) - (h1 * 60 + m1);
+// Depuis le calendrier unifié, les créneaux sont des événements avec des
+// dates ISO 8601 complètes ("2026-07-13T09:00:00") : on en extrait la
+// partie date et la partie heure par découpage de chaîne.
+const dateOf  = iso => iso?.slice(0, 10) ?? '';
+const heureOf = iso => iso?.slice(11, 16) || '—';
+
+// Durée entre deux dates ISO → "8h30", et "2j 4h" pour les événements longs
+function calculerDuree(debutIso, finIso) {
+  if (!debutIso || !finIso) return null;
+  const total = Math.round((new Date(finIso) - new Date(debutIso)) / 60000);
   if (total <= 0) return null;
   const h = Math.floor(total / 60);
   const m = total % 60;
+  if (h >= 24) {
+    const j = Math.floor(h / 24);
+    const reste = h % 24;
+    return reste > 0 ? `${j}j ${reste}h` : `${j}j`;
+  }
   return m > 0 ? `${h}h${m}` : `${h}h`;
 }
 
@@ -108,13 +117,14 @@ export default function Dashboard() {
         .then(r => (r.ok ? r.json() : [])).catch(() => []),
       fetch('/api/factures', { headers: authHeaders })
         .then(r => (r.ok ? r.json() : [])).catch(() => []),
-      fetch('/api/planning', { headers: authHeaders })
+      fetch('/api/evenements', { headers: authHeaders })
         .then(r => (r.ok ? r.json() : [])).catch(() => []),
-    ]).then(([t, f, p]) => {
+    ]).then(([t, f, ev]) => {
       setTaches(Array.isArray(t) ? t : []);
       setFactures(Array.isArray(f) ? f : []);
-      // Filtre par clé étrangère : fiable même en cas d'homonymes
-      const all = Array.isArray(p) ? p : [];
+      // "Mon planning" = les événements qui me ciblent (planning posé par
+      // mon manager + mes événements personnels) — filtre par clé étrangère
+      const all = Array.isArray(ev) ? ev : [];
       setPlanning(all.filter(e => e.employe_id === user?.id));
       setLoading(false);
     });
@@ -136,13 +146,13 @@ export default function Dashboard() {
 
   const today = new Date().toISOString().slice(0, 10);
   const affichage = filtre === 'a_venir'
-    ? planning.filter(e => e.date >= today)
+    ? planning.filter(e => dateOf(e.date_debut) >= today)
     : planning;
 
   // Prochaine journée de travail
   const prochain = [...planning]
-    .filter(e => e.date >= today)
-    .sort((a, b) => a.date.localeCompare(b.date))[0];
+    .filter(e => dateOf(e.date_debut) >= today)
+    .sort((a, b) => a.date_debut.localeCompare(b.date_debut))[0];
 
   return (
     <div className="page-enter">
@@ -183,12 +193,12 @@ export default function Dashboard() {
           {prochain && (
             <div className="mon-espace-next">
               <span className="mon-espace-next-label">Prochaine journée</span>
-              <strong>{fmtDate(prochain.date)}</strong>
-              <span>{prochain.heure_debut} → {prochain.heure_fin}</span>
-              {prochain.projet && <span className="badge badge-in-progress">{prochain.projet}</span>}
-              {calculerDuree(prochain.heure_debut, prochain.heure_fin) && (
+              <strong>{fmtDate(dateOf(prochain.date_debut))}</strong>
+              <span>{heureOf(prochain.date_debut)} → {heureOf(prochain.date_fin)}</span>
+              <span className="badge badge-in-progress">{prochain.titre}</span>
+              {calculerDuree(prochain.date_debut, prochain.date_fin) && (
                 <span style={{ color: '#888', fontSize: '0.85rem' }}>
-                  {calculerDuree(prochain.heure_debut, prochain.heure_fin)} de travail
+                  {calculerDuree(prochain.date_debut, prochain.date_fin)} de travail
                 </span>
               )}
             </div>
@@ -217,7 +227,7 @@ export default function Dashboard() {
                 <th>Début</th>
                 <th>Fin</th>
                 <th>Durée</th>
-                <th>Projet</th>
+                <th>Événement</th>
               </tr>
             </thead>
             <tbody>
@@ -234,24 +244,34 @@ export default function Dashboard() {
                   </div>
                 </td></tr>
               )}
-              {!loading && affichage
-                .sort((a, b) => a.date.localeCompare(b.date))
-                .map(e => (
-                  <tr key={e.id} style={e.date === today ? { background: '#f0eeff' } : {}}>
-                    <td style={{ fontWeight: e.date === today ? 600 : 400 }}>
-                      {fmtDate(e.date)}
-                      {e.date === today && <span className="badge badge-in-progress" style={{ marginLeft: 6 }}>Aujourd'hui</span>}
-                    </td>
-                    <td>{e.heure_debut}</td>
-                    <td>{e.heure_fin}</td>
-                    <td>
-                      {calculerDuree(e.heure_debut, e.heure_fin) && (
-                        <span className="badge">{calculerDuree(e.heure_debut, e.heure_fin)}</span>
-                      )}
-                    </td>
-                    <td style={{ color: '#666' }}>{e.projet || <span style={{ color: '#ccc' }}>—</span>}</td>
-                  </tr>
-                ))
+              {!loading && [...affichage]
+                .sort((a, b) => a.date_debut.localeCompare(b.date_debut))
+                .map(e => {
+                  const jour = dateOf(e.date_debut);
+                  return (
+                    <tr key={e.id} style={jour === today ? { background: '#f0eeff' } : {}}>
+                      <td style={{ fontWeight: jour === today ? 600 : 400 }}>
+                        {fmtDate(jour)}
+                        {jour === today && <span className="badge badge-in-progress" style={{ marginLeft: 6 }}>Aujourd'hui</span>}
+                      </td>
+                      <td>{heureOf(e.date_debut)}</td>
+                      <td>{heureOf(e.date_fin)}</td>
+                      <td>
+                        {calculerDuree(e.date_debut, e.date_fin) && (
+                          <span className="badge">{calculerDuree(e.date_debut, e.date_fin)}</span>
+                        )}
+                      </td>
+                      <td style={{ color: '#666' }}>
+                        {/* Pastille de la couleur choisie dans le calendrier */}
+                        <span style={{
+                          display: 'inline-block', width: 9, height: 9, borderRadius: '50%',
+                          background: e.couleur || '#7c6af7', marginRight: 7,
+                        }} />
+                        {e.titre}
+                      </td>
+                    </tr>
+                  );
+                })
               }
             </tbody>
           </table>

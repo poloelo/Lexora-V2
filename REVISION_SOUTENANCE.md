@@ -9,7 +9,7 @@
 
 ### 1.1 Qu'est-ce que Lexora ?
 
-Un **ERP full-stack pour petites équipes** : dashboard KPI, tâches de département (kanban), post-its personnels, CRM + factures, calendrier, coffre-fort documentaire, assistant IA local, et panneau admin (employés, planning, automations).
+Un **ERP full-stack pour petites équipes** : dashboard KPI, tâches de département (kanban), post-its personnels, CRM + factures, calendrier, coffre-fort documentaire, assistant IA local, et panneau admin (employés, automations). Le planning des employés vit dans le calendrier unifié (événements de type « planning » posés par les managers).
 
 ### 1.2 Stack technique et justification des choix
 
@@ -92,12 +92,12 @@ Lexora-V2/
 │
 └── lexora/
     ├── backend/                          ◄── API REST Express
-    │   ├── index.js                      # POINT D'ENTRÉE : middlewares globaux + montage des 12 routers
+    │   ├── index.js                      # POINT D'ENTRÉE : middlewares globaux + montage des 11 routers
     │   ├── env.js                        # Charge .env (dotenv) — importé EN PREMIER dans index.js
     │   ├── middleware/
     │   │   └── auth.js                   # MIDDLEWARES : verifyJWT, loadUser, requireRole
     │   ├── models/
-    │   │   └── db.js                     # MODEL : connexion SQLite, création du schéma, 5 migrations idempotentes, seed admin
+    │   │   └── db.js                     # MODEL : connexion SQLite, création du schéma, 7 migrations idempotentes, seed admin
     │   ├── services/
     │   │   └── ollamaService.js          # SERVICE : client HTTP vers Ollama (fonction chat)
     │   ├── routes/                       # ROUTES = "controllers" : 1 fichier = 1 domaine métier
@@ -109,8 +109,8 @@ Lexora-V2/
     │   │   ├── automations.js            # Règles d'automatisation (CRUD descriptif) — JWT requis
     │   │   ├── clients.js                # CRM clients (particulier/entreprise) — protégé JWT
     │   │   ├── factures.js               # Factures — protégé JWT
-    │   │   ├── planning.js               # Créneaux horaires des employés — protégé JWT
-    │   │   ├── evenements.js             # Événements du calendrier — protégé JWT
+    │   │   ├── evenements.js             # Calendrier unifié (général / planning / personnel)
+    │   │   │                             #  avec règles de visibilité par rôle — protégé JWT
     │   │   ├── documents.js              # Coffre-fort : dossiers + upload/download Multer — protégé JWT
     │   │   └── assistant.js              # POST → proxy vers ollamaService.chat() — protégé JWT
     │   ├── scripts/seed.js               # Données de démo idempotentes (mdp commun : demo1234)
@@ -135,10 +135,11 @@ Lexora-V2/
                 │                         #  (fusion de l'ancienne page "Mon espace")
                 ├── Taches.jsx            # Kanban 3 colonnes, drag & drop HTML5
                 ├── ClientsFactures.jsx   # 2 onglets : CRM + factures
-                ├── Calendrier.jsx        # react-big-calendar, fusion évènements+planning
+                ├── Calendrier.jsx        # react-big-calendar, source unique /api/evenements,
+                │                         #  création planning (manager) + choix de couleur
                 ├── Coffre_fort.jsx       # Arborescence, drag & drop upload, fil d'Ariane
                 ├── Assistant.jsx         # Chat avec le LLM
-                ├── Equipe.jsx            # ADMIN : 3 onglets (Employés, Planning, Automations)
+                ├── Equipe.jsx            # ADMIN : 2 onglets (Employés, Automations)
                 └── Login.jsx             # Formulaire de connexion
 ```
 
@@ -174,8 +175,9 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 | `GET/POST/PUT/DELETE /api/automations` | automations.js | verifyJWT seul | automations | CRUD |
 | `GET/POST/PUT/DELETE /api/clients` | clients.js | verifyJWT, loadUser | clients | CRUD |
 | `GET/POST/PUT/DELETE /api/factures` | factures.js | verifyJWT, loadUser | factures | CRUD |
-| `GET/POST/PUT/DELETE /api/planning` | planning.js | verifyJWT, loadUser | planning ⋈ employes | CRUD avec `employe_nom` joint |
-| `GET/POST/PUT/DELETE /api/evenements` | evenements.js | verifyJWT, loadUser | evenements | CRUD |
+| `GET /api/evenements` | evenements.js | verifyJWT, loadUser | evenements ⋈ employes (cible + créateur) | Événements **visibles par moi** : généraux + planning de mon département + les miens (admin : tout) |
+| `POST /api/evenements` | evenements.js | verifyJWT, loadUser | evenements | 201 ; type `planning` → réservé au manager du département de la cible, **couleur verte forcée** |
+| `PUT/DELETE /api/evenements/:id` | evenements.js | verifyJWT, loadUser | evenements | Créateur (perso/général), manager du département (planning), admin partout |
 | `GET /api/documents` | documents.js | verifyJWT, loadUser | documents | Liste (filtre `?dossier_id=`) |
 | `POST /api/documents/upload` | documents.js | verifyJWT, loadUser + multer `upload.single('file')` | documents + disque `/uploads` | 201 + métadonnées |
 | `GET /api/documents/:id/download` | documents.js | verifyJWT, loadUser | documents + disque | `res.download()` (le fichier) |
@@ -191,13 +193,13 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 |---|---|---|---|
 | `App.jsx` (racine) | Sidebar, AuthProvider, ToastProvider, garde AdminRoute | — | `useAuth` pour la garde et la carte utilisateur ; `/mon-espace` redirige vers `/` (fusion) |
 | `Login.jsx` (`/login`) | — | `POST /api/auth/login` (via `login()` du AuthContext) | `form`, `error`, `loading` ; `useNavigate` : admin → `/equipe`, sinon → `/` |
-| `Dashboard.jsx` (`/`) | StatCard (avec hook `useCountUp`), RecentItem, **PostItWall** | `GET /api/tasks` (avec JWT), `GET /api/factures`, `GET /api/planning` — en `Promise.all` ; planning filtré côté client par `employe_id === user.id` | `taches`, `factures`, `planning`, `filtre`, `loading` ; KPI par `filter`/`reduce` ; sections personnelles (post-its, planning) rendues seulement si `isAuthenticated` |
+| `Dashboard.jsx` (`/`) | StatCard (avec hook `useCountUp`), RecentItem, **PostItWall** | `GET /api/tasks`, `GET /api/factures`, `GET /api/evenements` — en `Promise.all` ; « Mon planning » = événements filtrés par `employe_id === user.id` | `taches`, `factures`, `planning`, `filtre`, `loading` ; KPI par `filter`/`reduce` ; sections personnelles (post-its, planning) rendues seulement si `isAuthenticated` |
 | `Taches.jsx` (`/taches`) | TaskCard (draggable) | `GET /api/tasks?department_id=`, `GET /api/departements`, `POST /api/tasks`, `PATCH /api/tasks/:id/status`, `DELETE /api/tasks/:id` | `tasks`, `prioFilter`, `depFilter`, `modalOpen`, `form` ; **update optimiste** sur le statut |
 | `ClientsFactures.jsx` (`/business`) | Tabs → Clients, Factures, StatusBadge | `GET/POST/DELETE /api/clients`, `GET/POST/DELETE /api/factures` | Chaque onglet a son propre state (`clients`/`factures`, `form`, `search`) |
-| `Calendrier.jsx` (`/calendrier`) | `<Calendar>` (react-big-calendar), Modal | `GET /api/evenements` + `GET /api/planning` (fusionnés), `POST /api/evenements`, `DELETE /api/evenements/:id` | `events` (les 2 sources converties au format `{title, start, end}`), `showCreate`, `detail`, `form` |
+| `Calendrier.jsx` (`/calendrier`) | `<Calendar>` (react-big-calendar), Modal | `GET /api/evenements` (source unique, déjà filtrée par le backend), `GET /api/employes/selector` (manager/admin), `POST /api/evenements`, `DELETE /api/evenements/:id` | `events` convertis au format `{title, start, end}`, `showCreate`, `detail`, `form` (type, couleur, employé ciblé, case « personnel ») |
 | `Coffre_fort.jsx` (`/documents`) | — (tout interne) | `GET /api/documents/dossiers`, `GET /api/documents`, `POST .../dossiers`, `POST .../upload` (FormData), `GET .../:id/download`, `DELETE` | `currentFolderId` (navigation), `dossiers`, `documents`, `dragActive` ; fil d'Ariane recalculé |
 | `Assistant.jsx` (`/assistant`) | — | `POST /api/assistant { prompt }` | `messages` (tableau {role, text, time}), `input`, `loading` ; auto-scroll via `useRef` |
-| `Equipe.jsx` (`/equipe`, **AdminRoute**) | Tabs → Employes, Planning, Automations | `GET/POST/DELETE /api/employes`, `GET /api/departements`, `GET /api/employes/selector`, `GET/POST/DELETE /api/planning`, `GET/POST/DELETE /api/automations` | Chaque onglet : liste + `form` + `search` ; headers admin = `authHeaders` |
+| `Equipe.jsx` (`/equipe`, **AdminRoute**) | Tabs → Employes, Automations | `GET/POST/DELETE /api/employes`, `GET /api/departements`, `GET/POST/DELETE /api/automations` | Chaque onglet : liste + `form` + `search` ; headers admin = `authHeaders` ; le planning se gère dans le Calendrier |
 | `PostItWall.jsx` (composant, rendu dans Dashboard) | — | `GET/POST/DELETE /api/todos`, `PATCH /api/todos/:id/toggle`, `GET /api/employes/selector` | `todos`, `content`, `color`, `assignees` ; **toggle optimiste avec rollback** |
 
 **Modèle mental à réciter** : *chaque page suit le même cycle : `useEffect` au montage → `fetch` → `setState` → rendu conditionnel (skeleton pendant `loading`, empty-state si vide, données sinon). Les mutations mettent à jour l'état local directement (ou rechargent via `load()`), et affichent un toast.*
@@ -241,14 +243,16 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 - `tasks.created_by / todos.created_by → SET NULL` : **le travail survit au départ de son créateur**, mais la référence nominative disparaît (RGPD).
 - `todo_assignees.* → CASCADE` : table de jointure pure ; supprimer un employé purge ses assignations.
 - `employes.departement_id → SET NULL` : supprimer un département ne licencie pas les employés.
-- `planning.employe_id → CASCADE` : purge des données personnelles de planning au départ d'un employé.
+- `evenements.employe_id → CASCADE` : le planning et les événements personnels d'un employé parti sont purgés (RGPD) ; `created_by_id → SET NULL` : l'événement général survit, anonymisé.
 
-**Migrations idempotentes** (5 au total)
+**Migrations idempotentes** (7 au total)
 - **Principe** : chaque migration **détecte l'état du schéma** avant d'agir (`PRAGMA table_info` pour lister les colonnes, `sqlite_master` pour tester l'existence d'une table). Sur une base neuve ou déjà migrée → no-op. On peut redémarrer le serveur autant de fois qu'on veut.
 - Exemples à citer :
   - *Migration 2* : `employes.departement` (texte libre) → `departement_id` (FK). Crée les départements depuis les valeurs distinctes existantes, rattache chaque employé par id, puis supprime la colonne texte. Le tout **dans une transaction** : tout ou rien.
   - *Migration 3* : ancienne table `todos` (titre/description) → nouveau schéma post-its. La table est **renommée** puis reconstruite, le contenu est fusionné (`titre — description`) et rattaché au premier admin (sinon, personne ne les verrait, la lecture étant filtrée par créateur/assigné).
-  - *Migration 5* : `planning.employe` (texte) → `employe_id` (FK) par correspondance de nom insensible à la casse. **Prudence** : la colonne texte n'est supprimée que si 100 % des lignes ont été appariées ; sinon elle est conservée et la migration se retente au prochain démarrage.
+  - *Migration 5* : `planning.employe` (texte) → `employe_id` (FK) par correspondance de nom insensible à la casse. **Prudence** : la colonne texte n'est supprimée que si 100 % des lignes ont été appariées ; sinon elle est conservée et la migration se retente au prochain démarrage. Conservée même après la fusion planning→événements : sur une très vieille base elle s'exécute AVANT la migration 7, pour que les créneaux partent avec leur FK.
+  - *Migration 6* : `evenements` gagne `employe_id` et `created_by_id` (FK) ; l'ancien `created_by` texte libre est supprimé (informatif, non migrable par nom de façon fiable).
+  - *Migration 7* : **fusion planning → evenements**. Chaque créneau devient un événement `planning` vert ciblant l'employé (`date` + heures concaténées en ISO 8601), puis `DROP TABLE planning`. Les créneaux orphelins deviennent des événements généraux plutôt que d'être perdus.
 
 ### 4.4 Backend — Logique métier des tâches (`routes/tasks.js`)
 
@@ -281,6 +285,20 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 - **Pourquoi une transaction** : si une insertion échoue au milieu, on ne veut pas d'un todo à moitié assigné — le DELETE+INSERT est atomique (tout ou rien). `db.transaction()` de better-sqlite3 gère le BEGIN/COMMIT/ROLLBACK automatiquement.
 
 **`GET /`** : `SELECT DISTINCT t.id ... LEFT JOIN todo_assignees ... WHERE created_by = ? OR assignee_id = ?` — le `DISTINCT` évite les doublons quand on est à la fois créateur et assigné.
+
+### 4.5 bis — Calendrier unifié (`routes/evenements.js`)
+
+Trois natures d'événements dans une seule table, selon `employe_id` et `type` :
+
+| Nature | Critère | Qui crée/modifie/supprime | Qui voit |
+|---|---|---|---|
+| Général | `employe_id` NULL | tout utilisateur (modif : créateur, admin) | tout le monde |
+| Planning | `type='planning'` + `employe_id` | **manager du département de la cible** (ou admin) ; couleur verte imposée | tout le département de l'employé ciblé |
+| Personnel | `employe_id` = soi | soi-même (couleur au choix) | créateur + **manager de son département** |
+
+- **`VISIBILITY_WHERE`** : la règle de visibilité est une clause SQL à paramètres nommés (`@me`, `@dep`, `@manager`) appliquée au `GET` pour les non-admins — général OU me cible OU créé par moi OU planning de mon département OU (manager ET cible dans mon département). Un miroir JS `canSee` sert au `GET /:id` ; un événement invisible renvoie **404 et non 403**, pour ne pas révéler son existence.
+- **`managesTarget(user, employeId)`** : admin partout ; manager uniquement si la cible appartient à son département (relit le département de la cible en base). Même philosophie que `canManage` de tasks.js.
+- **`checkTargetRights`** : à la création ET à la modification, les droits sont revérifiés sur les valeurs **finales** (changement de type ou de cible compris) — on ne peut pas transformer son événement perso en planning d'autrui.
 
 ### 4.6 Backend — Coffre-fort (`routes/documents.js`)
 
@@ -333,9 +351,11 @@ Toutes les routes sont montées dans `index.js`. Chaîne globale : `helmet → c
 - Anime un compteur de l'ancienne valeur vers `target` via `requestAnimationFrame` : à chaque frame, calcule `progress` (0→1), applique un easing cubique (`1 - (1-p)³` : rapide au début, doux à la fin), `setValue(arrondi)`.
 - `useRef(prev)` retient la dernière valeur atteinte **sans déclencher de re-render** — c'est exactement le cas d'usage de useRef vs useState.
 
-**Fusion calendrier** (Calendrier.jsx `loadEvents`)
-- Deux sources en `Promise.all` : `/api/evenements` et `/api/planning`. Chacune est **convertie au format react-big-calendar** `{ title, start: Date, end: Date }`.
-- Planning : `date` + `heure_debut` séparés en base → concaténés en `new Date("2026-06-15T09:00")` ; id préfixé `planning-${id}` pour éviter les collisions avec les ids d'événements ; champ `source` pour brancher le comportement au clic (un créneau planning ne se supprime pas ici mais dans la page Équipe).
+**Calendrier unifié** (Calendrier.jsx `loadEvents` + modal de création)
+- **Une seule source** : `/api/evenements`. Le backend renvoie déjà la liste filtrée selon la visibilité de l'utilisateur — le front ne fait que convertir au format react-big-calendar `{ title, start: Date, end: Date }` (le planning affiche « Nom de l'employé — Titre »).
+- Modal de création à géométrie variable : manager/admin voient l'option type « Planning (équipe) » qui remplace la palette de couleurs par un sélecteur d'employé (couleur verte imposée par le backend) ; les autres types offrent le **choix de couleur** (pastilles, comme les post-its — le vert en est exclu, réservé au planning) et une case « Événement personnel » qui envoie `employe_id = user.id`.
+- `eventPropGetter` colore chaque événement avec `event.couleur` venant de la base (les couleurs par type ne servent que de repli et de légende).
+- `canDelete` (miroir client des droits serveur) ne fait que cacher le bouton : le backend reste l'autorité.
 - `handleSelectSlot` : en vue mois, react-big-calendar renvoie `end` = minuit du lendemain → si `end <= start`, on force début + 1 h.
 
 **Fil d'Ariane** (Coffre_fort.jsx `getBreadcrumbs`)
@@ -414,19 +434,18 @@ employes (id, nom, prenom, email, poste, departement_id FK,
           salaire, date_embauche, role, password_hash)
     ▲ SET NULL   ▲ SET NULL   ▲ CASCADE      ▲ CASCADE
     │            │            │              │
-tasks         todos       todo_assignees   planning
-(title,       (content,   (todo_id FK ⟂    (employe_id FK,
- department_id color,      assignee_id FK,  date, heure_debut,
- FK CASCADE,  created_by,  PK composite)    heure_fin, projet)
- created_by,  status,
- status,      done_at)
- priority,
+tasks         todos       todo_assignees   evenements
+(title,       (content,   (todo_id FK ⟂    (titre, dates ISO 8601, type,
+ department_id color,      assignee_id FK,  couleur,
+ FK CASCADE,  created_by,  PK composite)    employe_id FK CASCADE,
+ created_by,  status,                       created_by_id FK SET NULL)
+ status,      done_at)                      ← calendrier unifié :
+ priority,                                    général / planning / perso
  due_date)
 
 Sans FK (indépendantes) :
 factures (client TEXTE volontairement, montant REAL, statut, dates)
 clients (type_client particulier/entreprise, email, siret...)
-evenements (titre, date_debut/fin ISO 8601, type, couleur)
 automations (nom, action, actif INTEGER 0/1)
 dossiers (parent_id auto-référence, NULL = racine)
 documents (nom affiché, nom_fichier disque, type, taille, dossier_id)
@@ -472,6 +491,9 @@ On applique le changement dans l'UI avant la réponse serveur, en gardant l'éta
 **« Pourquoi deux tables tasks ET todos ? »**
 Deux usages différents : `tasks` = travail structuré au niveau d'un **département** (kanban, priorité, échéance, géré par les managers) ; `todos` = mini-notes **personnelles** multi-assignées (N-N via todo_assignees). Les fusionner aurait donné une table à moitié vide avec des règles de droits contradictoires.
 
+**« Pourquoi avoir fusionné le planning et les événements ? »**
+Les deux décrivaient la même chose — un créneau daté — et le calendrier devait recoller les deux sources à chaque affichage. On a réalisé que planning ⊂ événements : un créneau de planning est un événement de type `planning` ciblant un employé, posé par son manager. Résultat : une table et un router en moins, un onglet admin en moins, et des règles de visibilité claires (général = tous, planning = le département, personnel = soi + son manager).
+
 **« Comment marchent vos migrations sans outil type Knex/Prisma ? »**
 Chaque migration inspecte le schéma réel (`PRAGMA table_info`, `sqlite_master`) et ne s'exécute que si l'ancien état est détecté, dans une transaction. Idempotent : un redémarrage sur base migrée est un no-op.
 
@@ -488,8 +510,8 @@ Jamais commité (`.gitignore`) ; `.env.example` documente les variables. Le secr
 
 ## 9. CHIFFRES À RETENIR
 
-- **12 routers** Express, **~35 endpoints**, montés sous `/api/*`
-- **11 tables** SQLite, **5 migrations** idempotentes
+- **11 routers** Express, **~32 endpoints**, montés sous `/api/*`
+- **10 tables** SQLite, **7 migrations** idempotentes
 - **8 pages** React (le Dashboard intègre l'espace personnel), **2 contexts** (Auth, Toast), **2 composants** partagés (Tabs, PostItWall)
 - JWT : **24 h**, bcrypt cost **10**, rate-limit **100 req/15 min/IP**, upload max **50 MB**, todo max **280 caractères**
 - 3 rôles : `employe` < `manager` (son département) < `admin` (tout)
