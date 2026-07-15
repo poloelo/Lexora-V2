@@ -175,13 +175,6 @@ router.get('/:id', (req, res) => {
 });
 
 // POST — Créer un événement (général, planning ou personnel)
-//
-// SÉCURISÉ PAR DÉFAUT : un événement non-planning créé SANS employe_id
-// devient PERSONNEL (cible = soi-même). Pour publier un événement général
-// visible par toute l'entreprise, le client doit envoyer explicitement
-// employe_id: null. On distingue donc "champ absent" (undefined → soi)
-// de "null explicite" (→ général) : publier à tous est un choix, jamais
-// un oubli de case à cocher.
 router.post('/', (req, res) => {
   try {
     const { titre, description, date_debut, date_fin, type, couleur, employe_id } = req.body;
@@ -193,13 +186,7 @@ router.post('/', (req, res) => {
     if (invalid) return res.status(400).json({ error: invalid });
 
     const finalType = type ?? 'evenement';
-    // Cible finale : planning → celle demandée (requise, vérifiée plus bas) ;
-    // sinon → champ absent = soi-même, null explicite = général.
-    const targetId = finalType === 'planning'
-      ? (employe_id ?? null)
-      : (employe_id === undefined ? req.user.id : employe_id);
-
-    const denied = checkTargetRights(req.user, finalType, targetId);
+    const denied = checkTargetRights(req.user, finalType, employe_id ?? null);
     if (denied) return res.status(403).json({ error: denied });
 
     const result = db.prepare(`
@@ -213,7 +200,7 @@ router.post('/', (req, res) => {
       finalType,
       // La couleur du planning est imposée : cohérence visuelle du calendrier
       finalType === 'planning' ? PLANNING_COLOR : (couleur ?? '#7c6af7'),
-      targetId,
+      employe_id ?? null,
       req.user.id
     );
 

@@ -9,11 +9,9 @@
  * Deux modes :
  *  - interactif (défaut) : charge ses données, clic sur créneau → modal
  *    de création (type "Planning équipe" pour manager/admin avec sélecteur
- *    d'employé et couleur verte imposée ; palette de couleurs sinon).
- *    Un événement est PERSONNEL par défaut : la case "Événement d'équipe"
- *    doit être cochée explicitement pour publier à tout le monde (le
- *    backend applique le même défaut — champ absent = soi-même).
- *    Clic sur événement → détail + suppression selon les droits
+ *    d'employé et couleur verte imposée ; palette de couleurs et case
+ *    "personnel" sinon), clic sur événement → détail + suppression selon
+ *    les droits
  *  - lecture seule (readOnly + events fournis en props) : consultation du
  *    dashboard d'un employé par son manager — le détail reste consultable
  *    mais aucune création/suppression n'est possible
@@ -76,7 +74,7 @@ const COULEURS = ['#7c6af7', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec489
 // ── Valeur vide du formulaire de création ─────────────────
 const FORM_VIDE = {
   titre: '', description: '', date_debut: '', date_fin: '',
-  type: 'rdv', couleur: COULEURS[0], employe_id: '', equipe: false,
+  type: 'rdv', couleur: COULEURS[0], employe_id: '', personnel: false,
 };
 
 // ── Helper : convertit une Date JS en valeur datetime-local ──
@@ -195,9 +193,8 @@ export default function CalendarBoard({ readOnly = false, events: externalEvents
         body.employe_id = Number(form.employe_id);
       } else {
         body.couleur = form.couleur;
-        // Personnel par défaut (me cible) ; case "équipe" cochée →
-        // employe_id null EXPLICITE = événement général visible par tous
-        body.employe_id = form.equipe ? null : user.id;
+        // Case "personnel" cochée → l'événement me cible (visible par moi + mon manager)
+        if (form.personnel) body.employe_id = user.id;
       }
 
       const res = await fetch('/api/evenements', {
@@ -372,20 +369,17 @@ export default function CalendarBoard({ readOnly = false, events: externalEvents
                     </div>
                   </div>
 
-                  {/* Personnel par défaut ; cocher pour publier à toute l'entreprise */}
+                  {/* Général (visible par tous) ou personnel (moi + mon manager) */}
                   <div className="form-group">
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                       <input
                         type="checkbox"
-                        checked={form.equipe}
-                        onChange={e => setForm(p => ({ ...p, equipe: e.target.checked }))}
+                        checked={form.personnel}
+                        onChange={e => setForm(p => ({ ...p, personnel: e.target.checked }))}
                         style={{ width: 'auto' }}
                       />
-                      Événement d'équipe (visible par tout le monde)
+                      Événement personnel (visible par vous et votre manager)
                     </label>
-                    <p style={{ fontSize: '0.78rem', color: '#aaa', marginTop: 4 }}>
-                      Non coché : événement personnel, visible par vous (et votre manager via la consultation).
-                    </p>
                   </div>
                 </>
               )}

@@ -130,34 +130,27 @@ for (const t of TODOS) {
 // ── Événements (calendrier unifié) ───────────────────────────
 // Trois natures illustrées : planning posé par le manager du département
 // (vert, cible un employé), réunion générale (visible par tous, pas de
-// cible) et événements personnels (cible = soi, couleur au choix, visibles
-// par le manager uniquement via la consultation du dashboard).
-// Dates relatives : il y a TOUJOURS du planning aujourd'hui, une réunion
-// à venir et un créneau multi-jours en cours.
+// cible) et événement personnel (créé pour soi, visible par son manager).
 const EVENEMENTS = [
   // Planning (type 'planning', couleur verte imposée, créé par le manager)
-  { titre: 'Clôture trimestrielle', debut: iso(0, '09:00'),  fin: iso(0, '17:00'),  type: 'planning', couleur: '#10b981', pour: 's.martin@lexora.fr',  par: 'm.dupont@lexora.fr' },
-  { titre: 'Migration staging',     debut: iso(-1, '10:00'), fin: iso(2, '18:00'),  type: 'planning', couleur: '#10b981', pour: 'j.bernard@lexora.fr', par: 'a.petit@lexora.fr'  },
-  { titre: 'Salon PME',             debut: iso(3, '09:00'),  fin: iso(4, '17:00'),  type: 'planning', couleur: '#10b981', pour: 't.roux@lexora.fr',    par: 'admin@lexora.fr'    },
+  { titre: 'Clôture Q3',        debut: '2026-07-13T09:00:00', fin: '2026-07-13T17:00:00', type: 'planning', couleur: '#10b981', pour: 's.martin@lexora.fr',  par: 'm.dupont@lexora.fr' },
+  { titre: 'Migration staging', debut: '2026-07-13T10:00:00', fin: '2026-07-15T18:00:00', type: 'planning', couleur: '#10b981', pour: 'j.bernard@lexora.fr', par: 'a.petit@lexora.fr'  },
+  { titre: 'Salon PME',         debut: '2026-07-15T09:00:00', fin: '2026-07-16T17:00:00', type: 'planning', couleur: '#10b981', pour: 't.roux@lexora.fr',    par: 'admin@lexora.fr'    },
   // Réunion générale — employe_id NULL, visible par tout le monde
-  { titre: 'Réunion mensuelle toute l\'équipe', debut: iso(2, '14:00'), fin: iso(2, '15:30'), type: 'rdv', couleur: '#7c6af7', pour: null, par: 'admin@lexora.fr' },
-  // Événements personnels — cible = soi, visibles par le manager via consultation
-  { titre: 'Relancer la mutuelle',      debut: iso(1, '11:00'), fin: iso(1, '11:30'), type: 'rappel', couleur: '#f59e0b', pour: 's.martin@lexora.fr', par: 's.martin@lexora.fr' },
-  { titre: 'Préparer le point budget',  debut: iso(0, '17:00'), fin: iso(0, '17:45'), type: 'tache',  couleur: '#3b82f6', pour: 'm.dupont@lexora.fr', par: 'm.dupont@lexora.fr' },
+  { titre: 'Réunion mensuelle toute l\'équipe', debut: '2026-07-17T14:00:00', fin: '2026-07-17T15:30:00', type: 'rdv', couleur: '#7c6af7', pour: null, par: 'admin@lexora.fr' },
+  // Événement personnel — créé pour soi, visible par soi + son manager
+  { titre: 'Relancer la mutuelle', debut: '2026-07-16T11:00:00', fin: '2026-07-16T11:30:00', type: 'rappel', couleur: '#f59e0b', pour: 's.martin@lexora.fr', par: 's.martin@lexora.fr' },
 ];
 
-// Rafraîchissement : un événement de démo est identifié par son titre —
-// s'il existe déjà, on remet simplement ses dates relatives à jour.
-const findEvenement    = db.prepare('SELECT id FROM evenements WHERE titre = ?');
-const insertEvenement  = db.prepare(`
+const findEvenement   = db.prepare('SELECT id FROM evenements WHERE titre = ? AND date_debut = ?');
+const insertEvenement = db.prepare(`
   INSERT INTO evenements (titre, date_debut, date_fin, type, couleur, employe_id, created_by_id)
   VALUES (?, ?, ?, ?, ?, ?, ?)
 `);
-const refreshEvenement = db.prepare('UPDATE evenements SET date_debut = ?, date_fin = ? WHERE id = ?');
 for (const e of EVENEMENTS) {
-  const existing = findEvenement.get(e.titre);
-  if (existing) refreshEvenement.run(e.debut, e.fin, existing.id);
-  else insertEvenement.run(e.titre, e.debut, e.fin, e.type, e.couleur, e.pour ? empId[e.pour] : null, empId[e.par]);
+  if (!findEvenement.get(e.titre, e.debut)) {
+    insertEvenement.run(e.titre, e.debut, e.fin, e.type, e.couleur, e.pour ? empId[e.pour] : null, empId[e.par]);
+  }
 }
 
 // ── Clients ────────────────────────────────────────────────
