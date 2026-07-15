@@ -350,7 +350,8 @@ export default function CalendarBoard({ readOnly = false, events: externalEvents
                     {employes.map(emp => <option key={emp.id} value={emp.id}>{emp.nom}</option>)}
                   </select>
                   <p style={{ fontSize: '0.78rem', color: '#aaa', marginTop: 4 }}>
-                    Visible par tout le département de l'employé — couleur verte imposée.
+                    S'affiche sur le calendrier de l'employé (couleur verte imposée) —
+                    retrouvez-le via « Voir le dashboard » dans la page Équipe.
                   </p>
                 </div>
               ) : (
