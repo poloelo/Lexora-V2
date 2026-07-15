@@ -396,8 +396,6 @@ GET    /api/evenements        → Event[] (server-side visibility filter)
 GET    /api/evenements/:id    → Event   (404 if invisible — existence not revealed)
 POST   /api/evenements        → Event   Body: { titre*, date_debut* (ISO 8601), date_fin, type, couleur, employe_id }
                                         type 'planning' → manager of target's department only, green color forced
-                                        Secure by default: employe_id ABSENT → personal event (targets yourself);
-                                        employe_id: null EXPLICIT → general event visible to everyone
 PUT    /api/evenements/:id    → Event   (creator | department manager for planning | admin; rights re-checked on final values)
 DELETE /api/evenements/:id    → { message } (same rights as PUT)
 ```
