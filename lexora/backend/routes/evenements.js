@@ -9,8 +9,9 @@
  *
  *  2. PLANNING (type 'planning' + employe_id) — "les grandes lignes de la
  *     semaine" d'un employé. Créé/modifié/supprimé uniquement par le manager
- *     du département de l'employé ciblé (ou admin). Visible par tout le
- *     département de l'employé. Toujours vert (#10b981), couleur forcée.
+ *     du département de l'employé ciblé (ou admin). Toujours vert (#10b981),
+ *     couleur forcée. Ne s'affiche que sur le calendrier de l'employé
+ *     ciblé ; le manager le retrouve via la consultation de son dashboard.
  *
  *  3. PERSONNEL (employe_id = soi-même, type ≠ planning) — échéances et
  *     organisation de sa journée. L'employé choisit la couleur. Visible
@@ -18,12 +19,13 @@
  *     (et l'admin) y accèdent uniquement via la consultation du dashboard
  *     de l'employé (GET /api/dashboard/:userId).
  *
- * Le calendrier du dashboard est PERSONNEL pour tout le monde, admin
- * compris : chacun voit les événements généraux, ceux qui le ciblent,
- * ceux qu'il a créés, et le planning de son propre département. L'admin
- * garde tous ses droits d'écriture (canSee/canManageEvent), mais sa vue
- * n'agrège plus toute l'entreprise — l'emploi du temps d'un employé se
- * consulte depuis la page Équipe, pas depuis son propre calendrier.
+ * RÈGLE D'AFFICHAGE (la plus simple possible) : le calendrier du dashboard
+ * montre les événements GÉNÉRAUX + ceux qui ME ciblent. Rien d'autre, pour
+ * aucun rôle — même le planning qu'un manager pose sur son équipe
+ * n'apparaît que chez l'employé ciblé. Tout ce qui concerne quelqu'un
+ * d'autre se consulte depuis la page Équipe (GET /api/dashboard/:userId).
+ * Les DROITS d'écriture restent entiers (canSee/canManageEvent) : voir
+ * moins ne veut pas dire pouvoir moins.
  *
  * Les dates sont stockées au format ISO 8601 : "2026-05-20T09:00:00"
  * Ce format est compris directement par new Date() côté frontend.
@@ -53,23 +55,17 @@ const EVENT_SELECT = `
 `;
 
 // Clause de visibilité du calendrier personnel (voir l'en-tête) :
-// général OU me concerne OU créé par moi OU planning de mon département
-// ("les grandes lignes de la semaine" restent partagées dans l'équipe).
-// Volontairement PAS de passe-droit admin/manager ici : la vision des
-// calendriers des employés passe par GET /api/dashboard/:userId.
+// GÉNÉRAL (employe_id NULL) OU me cible. C'est tout — volontairement
+// aucun passe-droit créateur/manager/admin sur l'AFFICHAGE : le planning
+// posé sur un employé n'apparaît que chez lui, et la vision des
+// calendriers des autres passe par GET /api/dashboard/:userId.
 const VISIBILITY_WHERE = `(
   ev.employe_id IS NULL
   OR ev.employe_id = @me
-  OR ev.created_by_id = @me
-  OR (ev.type = 'planning' AND cib.departement_id = @dep)
 )`;
 
 // Paramètres nommés de la clause de visibilité pour l'utilisateur courant.
-// @dep = -1 si sans département : l'égalité ne matche alors jamais.
-const visibilityParams = user => ({
-  me:  user.id,
-  dep: user.departement_id ?? -1,
-});
+const visibilityParams = user => ({ me: user.id });
 
 const getEvent = id => db.prepare(`${EVENT_SELECT} WHERE ev.id = ?`).get(id);
 

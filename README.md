@@ -75,7 +75,7 @@ Three roles: `employe` < `manager` < `admin`. The JWT only identifies the user �
 | Consult an employee's dashboard (read-only) | — | own department | everyone |
 | Manage employee accounts / departments | — | — | ✅ |
 
-**Calendar visibility is personal for every role, admin included**: your dashboard shows general events, events targeting you, events you created, and your own department's planning. Viewing an employee's full schedule goes through the Équipe page (`GET /api/dashboard/:userId`) — never through your own calendar.
+**Calendar visibility is strictly personal for every role, admin included**: your dashboard shows general events and events targeting you — nothing else. Even the planning a manager places on their team only appears on the target employee's calendar; viewing an employee's schedule goes through the Équipe page (`GET /api/dashboard/:userId`). Write rights are unchanged: seeing less doesn't mean being allowed less.
 
 ---
 
