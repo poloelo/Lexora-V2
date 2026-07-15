@@ -256,7 +256,7 @@ Le point le plus subtil du projet. Une table, trois natures (voir §4.5 bis), et
 
 Exemple `POST` planning par un manager :
 ```json
-→ { "titre": "Clôture Q3", "date_debut": "2026-07-14T09:00:00",
+→ { "titre": "Clôture trimestrielle", "date_debut": "2026-07-14T09:00:00",
     "date_fin": "2026-07-14T17:00:00", "type": "planning", "employe_id": 3 }
 ← 201 { ..., "couleur": "#10b981", "employe_nom": "Sophie Martin",
         "created_by_nom": "Marie Dupont" }
