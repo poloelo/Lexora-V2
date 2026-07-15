@@ -75,7 +75,7 @@ Three roles: `employe` < `manager` < `admin`. The JWT only identifies the user �
 | Consult an employee's dashboard (read-only) | — | own department | everyone |
 | Manage employee accounts / departments | — | — | ✅ |
 
-**Calendar visibility is personal for every role, admin included**: your dashboard shows general events, events targeting you, events you created, and your own department's planning. Viewing an employee's full schedule goes through the Équipe page (`GET /api/dashboard/:userId`) — never through your own calendar.
+**Calendar visibility is strictly personal for every role, admin included**: your dashboard shows general events and events targeting you — nothing else. Even the planning a manager places on their team only appears on the target employee's calendar; viewing an employee's schedule goes through the Équipe page (`GET /api/dashboard/:userId`). Write rights are unchanged: seeing less doesn't mean being allowed less.
 
 ---
 
@@ -396,6 +396,8 @@ GET    /api/evenements        → Event[] (server-side visibility filter)
 GET    /api/evenements/:id    → Event   (404 if invisible — existence not revealed)
 POST   /api/evenements        → Event   Body: { titre*, date_debut* (ISO 8601), date_fin, type, couleur, employe_id }
                                         type 'planning' → manager of target's department only, green color forced
+                                        Secure by default: employe_id ABSENT → personal event (targets yourself);
+                                        employe_id: null EXPLICIT → general event visible to everyone
 PUT    /api/evenements/:id    → Event   (creator | department manager for planning | admin; rights re-checked on final values)
 DELETE /api/evenements/:id    → { message } (same rights as PUT)
 ```

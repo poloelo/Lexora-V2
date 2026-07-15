@@ -4,12 +4,19 @@
  * Usage : npm run seed  (depuis lexora/backend)
  *
  * Peuple la base avec des départements, employés, tâches de département,
- * todos post-its et créneaux de planning cohérents entre eux (toutes les
- * références passent par les vraies clés étrangères).
+ * todos post-its, événements du calendrier unifié et clients (avec leur
+ * dossier documentaire) cohérents entre eux — toutes les références
+ * passent par les vraies clés étrangères.
  *
- * Idempotent : chaque entité est identifiée par sa clé naturelle
- * (nom de département, email d'employé...) et n'est insérée que si elle
- * n'existe pas déjà. Relancer le script ne duplique rien.
+ * DATES RELATIVES : toutes les dates sont calculées par rapport au jour
+ * d'exécution (jour(0) = aujourd'hui, jour(2) = après-demain...). La démo
+ * reste donc vivante quelle que soit la date de la soutenance : planning
+ * du jour, réunion à venir, tâche en retard d'hier...
+ *
+ * Idempotent ET rafraîchissant : chaque entité est identifiée par sa clé
+ * naturelle (email, titre...). Relancer le script ne duplique rien, mais
+ * REMET À JOUR les dates des tâches et événements de démo — pratique pour
+ * raviver une base la veille de la présentation.
  *
  * Tous les comptes de démo utilisent le mot de passe : demo1234
  */
@@ -19,6 +26,19 @@ import db from '../models/db.js';
 
 const DEMO_PASSWORD = 'demo1234';
 const hash = bcrypt.hashSync(DEMO_PASSWORD, 10);
+
+// ── Helpers de dates relatives ───────────────────────────────
+// jour(-2) = avant-hier, jour(0) = aujourd'hui, jour(3) = dans 3 jours.
+// Construites en heure LOCALE (le calendrier affiche en local) :
+// toISOString() serait en UTC et pourrait décaler d'un jour près de minuit.
+const pad = n => String(n).padStart(2, '0');
+const jour = offset => {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+// iso(1, '09:30') → "2026-07-16T09:30:00" (si on est le 15)
+const iso = (offset, heure) => `${jour(offset)}T${heure}:00`;
 
 // ── Départements ─────────────────────────────────────────────
 const DEPARTEMENTS = ['Direction', 'Finance', 'Ressources Humaines', 'Technique', 'Commercial'];
@@ -58,25 +78,30 @@ const empId = Object.fromEntries(
 );
 
 // ── Tâches de département ────────────────────────────────────
+// Échéances relatives : une tâche EN RETARD (due hier, badge rouge sur le
+// kanban), des échéances proches et lointaines — le tableau vit.
 const TASKS = [
-  { title: 'Générer le rapport Q3',           description: 'Consolidation des comptes du troisième trimestre.', dep: 'Finance',   by: 'm.dupont@lexora.fr', status: 'in_progress', priority: 'high',   due: '2026-07-31' },
-  { title: 'Relancer les factures impayées',  description: 'Clients avec plus de 30 jours de retard.',          dep: 'Finance',   by: 'm.dupont@lexora.fr', status: 'todo',        priority: 'medium', due: '2026-07-20' },
-  { title: 'Clôturer le budget prévisionnel', description: null,                                                dep: 'Finance',   by: 'm.dupont@lexora.fr', status: 'done',        priority: 'low',    due: '2026-06-30' },
-  { title: 'Migrer le serveur de staging',    description: 'Passage sur la nouvelle infrastructure.',           dep: 'Technique', by: 'a.petit@lexora.fr',  status: 'in_progress', priority: 'high',   due: '2026-07-18' },
-  { title: 'Corriger le bug d\'export PDF',   description: 'Les factures de plus de 2 pages sont tronquées.',   dep: 'Technique', by: 'a.petit@lexora.fr',  status: 'todo',        priority: 'medium', due: null },
-  { title: 'Préparer les entretiens annuels', description: 'Planifier les créneaux de septembre.',              dep: 'Ressources Humaines', by: 'admin@lexora.fr', status: 'todo',  priority: 'medium', due: '2026-08-15' },
+  { title: 'Générer le rapport trimestriel',  description: 'Consolidation des comptes du trimestre.',           dep: 'Finance',   by: 'm.dupont@lexora.fr', status: 'in_progress', priority: 'high',   due: jour(10) },
+  { title: 'Relancer les paiements en retard', description: 'Clients avec plus de 30 jours de retard.',         dep: 'Finance',   by: 'm.dupont@lexora.fr', status: 'todo',        priority: 'medium', due: jour(4) },
+  { title: 'Clôturer le budget prévisionnel', description: null,                                                dep: 'Finance',   by: 'm.dupont@lexora.fr', status: 'done',        priority: 'low',    due: jour(-7) },
+  { title: 'Migrer le serveur de staging',    description: 'Passage sur la nouvelle infrastructure.',           dep: 'Technique', by: 'a.petit@lexora.fr',  status: 'in_progress', priority: 'high',   due: jour(2) },
+  { title: 'Corriger le bug d\'export PDF',   description: 'Les documents de plus de 2 pages sont tronqués.',   dep: 'Technique', by: 'a.petit@lexora.fr',  status: 'todo',        priority: 'high',   due: jour(-1) },
+  { title: 'Préparer les entretiens annuels', description: 'Planifier les créneaux du mois prochain.',          dep: 'Ressources Humaines', by: 'admin@lexora.fr', status: 'todo',  priority: 'medium', due: jour(30) },
   { title: 'Mettre à jour le pipeline CRM',   description: null,                                                dep: 'Commercial', by: 'admin@lexora.fr',   status: 'todo',        priority: 'low',    due: null },
 ];
 
-const findTask   = db.prepare('SELECT id FROM tasks WHERE title = ? AND department_id = ?');
-const insertTask = db.prepare(`
+const findTask    = db.prepare('SELECT id FROM tasks WHERE title = ? AND department_id = ?');
+const insertTask  = db.prepare(`
   INSERT INTO tasks (title, description, department_id, created_by, status, priority, due_date)
   VALUES (?, ?, ?, ?, ?, ?, ?)
 `);
+// Rafraîchissement : si la tâche de démo existe déjà, on ne recrée rien
+// mais on remet son échéance relative à jour.
+const refreshTask = db.prepare("UPDATE tasks SET due_date = ?, updated_at = datetime('now') WHERE id = ?");
 for (const t of TASKS) {
-  if (!findTask.get(t.title, depId[t.dep])) {
-    insertTask.run(t.title, t.description, depId[t.dep], empId[t.by], t.status, t.priority, t.due);
-  }
+  const existing = findTask.get(t.title, depId[t.dep]);
+  if (existing) refreshTask.run(t.due, existing.id);
+  else insertTask.run(t.title, t.description, depId[t.dep], empId[t.by], t.status, t.priority, t.due);
 }
 
 // ── Todos post-its ───────────────────────────────────────────
@@ -105,27 +130,34 @@ for (const t of TODOS) {
 // ── Événements (calendrier unifié) ───────────────────────────
 // Trois natures illustrées : planning posé par le manager du département
 // (vert, cible un employé), réunion générale (visible par tous, pas de
-// cible) et événement personnel (créé pour soi, visible par son manager).
+// cible) et événements personnels (cible = soi, couleur au choix, visibles
+// par le manager uniquement via la consultation du dashboard).
+// Dates relatives : il y a TOUJOURS du planning aujourd'hui, une réunion
+// à venir et un créneau multi-jours en cours.
 const EVENEMENTS = [
   // Planning (type 'planning', couleur verte imposée, créé par le manager)
-  { titre: 'Clôture Q3',        debut: '2026-07-13T09:00:00', fin: '2026-07-13T17:00:00', type: 'planning', couleur: '#10b981', pour: 's.martin@lexora.fr',  par: 'm.dupont@lexora.fr' },
-  { titre: 'Migration staging', debut: '2026-07-13T10:00:00', fin: '2026-07-15T18:00:00', type: 'planning', couleur: '#10b981', pour: 'j.bernard@lexora.fr', par: 'a.petit@lexora.fr'  },
-  { titre: 'Salon PME',         debut: '2026-07-15T09:00:00', fin: '2026-07-16T17:00:00', type: 'planning', couleur: '#10b981', pour: 't.roux@lexora.fr',    par: 'admin@lexora.fr'    },
+  { titre: 'Clôture trimestrielle', debut: iso(0, '09:00'),  fin: iso(0, '17:00'),  type: 'planning', couleur: '#10b981', pour: 's.martin@lexora.fr',  par: 'm.dupont@lexora.fr' },
+  { titre: 'Migration staging',     debut: iso(-1, '10:00'), fin: iso(2, '18:00'),  type: 'planning', couleur: '#10b981', pour: 'j.bernard@lexora.fr', par: 'a.petit@lexora.fr'  },
+  { titre: 'Salon PME',             debut: iso(3, '09:00'),  fin: iso(4, '17:00'),  type: 'planning', couleur: '#10b981', pour: 't.roux@lexora.fr',    par: 'admin@lexora.fr'    },
   // Réunion générale — employe_id NULL, visible par tout le monde
-  { titre: 'Réunion mensuelle toute l\'équipe', debut: '2026-07-17T14:00:00', fin: '2026-07-17T15:30:00', type: 'rdv', couleur: '#7c6af7', pour: null, par: 'admin@lexora.fr' },
-  // Événement personnel — créé pour soi, visible par soi + son manager
-  { titre: 'Relancer la mutuelle', debut: '2026-07-16T11:00:00', fin: '2026-07-16T11:30:00', type: 'rappel', couleur: '#f59e0b', pour: 's.martin@lexora.fr', par: 's.martin@lexora.fr' },
+  { titre: 'Réunion mensuelle toute l\'équipe', debut: iso(2, '14:00'), fin: iso(2, '15:30'), type: 'rdv', couleur: '#7c6af7', pour: null, par: 'admin@lexora.fr' },
+  // Événements personnels — cible = soi, visibles par le manager via consultation
+  { titre: 'Relancer la mutuelle',      debut: iso(1, '11:00'), fin: iso(1, '11:30'), type: 'rappel', couleur: '#f59e0b', pour: 's.martin@lexora.fr', par: 's.martin@lexora.fr' },
+  { titre: 'Préparer le point budget',  debut: iso(0, '17:00'), fin: iso(0, '17:45'), type: 'tache',  couleur: '#3b82f6', pour: 'm.dupont@lexora.fr', par: 'm.dupont@lexora.fr' },
 ];
 
-const findEvenement   = db.prepare('SELECT id FROM evenements WHERE titre = ? AND date_debut = ?');
-const insertEvenement = db.prepare(`
+// Rafraîchissement : un événement de démo est identifié par son titre —
+// s'il existe déjà, on remet simplement ses dates relatives à jour.
+const findEvenement    = db.prepare('SELECT id FROM evenements WHERE titre = ?');
+const insertEvenement  = db.prepare(`
   INSERT INTO evenements (titre, date_debut, date_fin, type, couleur, employe_id, created_by_id)
   VALUES (?, ?, ?, ?, ?, ?, ?)
 `);
+const refreshEvenement = db.prepare('UPDATE evenements SET date_debut = ?, date_fin = ? WHERE id = ?');
 for (const e of EVENEMENTS) {
-  if (!findEvenement.get(e.titre, e.debut)) {
-    insertEvenement.run(e.titre, e.debut, e.fin, e.type, e.couleur, e.pour ? empId[e.pour] : null, empId[e.par]);
-  }
+  const existing = findEvenement.get(e.titre);
+  if (existing) refreshEvenement.run(e.debut, e.fin, existing.id);
+  else insertEvenement.run(e.titre, e.debut, e.fin, e.type, e.couleur, e.pour ? empId[e.pour] : null, empId[e.par]);
 }
 
 // ── Clients ────────────────────────────────────────────────
@@ -158,6 +190,20 @@ for (const c of CLIENTS) {
     const { lastInsertRowid: dossierId } = insertDossier.run(c.nom, null, clientsRootId);
     linkDossier.run(dossierId, clientId);
   }
+}
+
+// ── Contrôle d'intégrité : événements généraux "hérités" ─────
+// Sur une base ayant traversé les migrations, les événements créés avant
+// le calendrier unifié (employe_id ET created_by_id NULL) sont devenus
+// généraux : visibles par toute l'entreprise. On les signale pour que
+// l'utilisateur puisse trier — impossible de deviner leur cible d'origine.
+const heritages = db.prepare(`
+  SELECT COUNT(*) AS n FROM evenements
+  WHERE employe_id IS NULL AND created_by_id IS NULL
+`).get().n;
+if (heritages > 0) {
+  console.warn(`⚠️  ${heritages} événement(s) hérité(s) d'une ancienne base (sans cible ni créateur) : ils sont`);
+  console.warn('   visibles par tout le monde. Supprimez-les depuis le calendrier s\'ils sont indésirables.');
 }
 
 console.log('✅ Seed terminé');

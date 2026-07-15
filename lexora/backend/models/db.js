@@ -151,8 +151,8 @@ db.exec(`
   -- Depuis la fusion planning/événements, cette table porte trois usages :
   --  1. Événement général  (employe_id NULL)           : visible par tous
   --  2. Planning           (type 'planning' + employe_id) : posé par le manager
-  --     du département de l'employé ciblé, visible par tout son département,
-  --     toujours vert (#10b981)
+  --     du département de l'employé ciblé, affiché uniquement sur le
+  --     calendrier de cet employé, toujours vert (#10b981)
   --  3. Événement personnel (employe_id = soi-même)    : visible par son
   --     créateur ; manager et admin y accèdent uniquement via la
   --     consultation du dashboard (GET /api/dashboard/:userId)
