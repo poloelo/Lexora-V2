@@ -160,6 +160,20 @@ for (const c of CLIENTS) {
   }
 }
 
+// ── Contrôle d'intégrité : événements généraux "hérités" ─────
+// Sur une base ayant traversé les migrations, les événements créés avant
+// le calendrier unifié (employe_id ET created_by_id NULL) sont devenus
+// généraux : visibles par toute l'entreprise. On les signale pour que
+// l'utilisateur puisse trier — impossible de deviner leur cible d'origine.
+const heritages = db.prepare(`
+  SELECT COUNT(*) AS n FROM evenements
+  WHERE employe_id IS NULL AND created_by_id IS NULL
+`).get().n;
+if (heritages > 0) {
+  console.warn(`⚠️  ${heritages} événement(s) hérité(s) d'une ancienne base (sans cible ni créateur) : ils sont`);
+  console.warn('   visibles par tout le monde. Supprimez-les depuis le calendrier s\'ils sont indésirables.');
+}
+
 console.log('✅ Seed terminé');
 console.log(`   Départements : ${db.prepare('SELECT COUNT(*) AS n FROM departements').get().n}`);
 console.log(`   Employés     : ${db.prepare('SELECT COUNT(*) AS n FROM employes').get().n} (mot de passe démo : ${DEMO_PASSWORD})`);
