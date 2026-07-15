@@ -250,7 +250,7 @@ Le point le plus subtil du projet. Une table, trois natures (voir §4.5 bis), et
 |---|---|---|
 | `GET /` | authentifié | `getEventsVisibleBy(req.user)` — requête SQL à paramètres nommés (`@me`, `@dep`) |
 | `GET /:id` | selon `canSee` | **404 si invisible** (pas 403 : on ne révèle pas l'existence) |
-| `POST /` | selon le type | `planning` → `employe_id` requis + `managesTarget` (manager du dept de la cible / admin) + **vert #10b981 imposé** ; autre type ciblant quelqu'un → soi-même seulement (sauf manager/admin du dept) ; général → tout le monde. `created_by_id = req.user.id` |
+| `POST /` | selon le type | `planning` → `employe_id` requis + `managesTarget` (manager du dept de la cible / admin) + **vert #10b981 imposé**. Autres types : **personnel par défaut** — champ `employe_id` absent → cible = soi-même ; `employe_id: null` **explicite** → événement général visible par tous (publier à toute l'entreprise est un choix, jamais un oubli). `created_by_id = req.user.id` |
 | `PUT /:id` | `canManageEvent` | Droits revérifiés sur les **valeurs finales** (type et cible après modification) : impossible de transformer son rappel perso en planning d'autrui |
 | `DELETE /:id` | `canManageEvent` | Créateur (perso/général), manager du dept (planning), admin |
 
@@ -406,7 +406,7 @@ Trois natures d'événements dans une seule table, selon `employe_id` et `type` 
 
 | Nature | Critère | Qui crée/modifie/supprime | Qui voit |
 |---|---|---|---|
-| Général | `employe_id` NULL | tout utilisateur (modif : créateur, admin) | tout le monde |
+| Général | `employe_id` NULL (**null explicite** à la création — champ absent = personnel) | tout utilisateur (modif : créateur, admin) | tout le monde |
 | Planning | `type='planning'` + `employe_id` | **manager du département de la cible** (ou admin) ; couleur verte imposée | tout le département de l'employé ciblé |
 | Personnel | `employe_id` = soi | soi-même (couleur au choix) | créateur sur son calendrier ; manager/admin **uniquement via la consultation** `GET /api/dashboard/:userId` |
 
@@ -651,7 +651,7 @@ Trois pages (Dashboard, Tâches, Calendrier) affichaient l'espace de travail d'u
 
 Un parcours de 5 minutes qui traverse toutes les fonctionnalités, avec les comptes du seed (`npm run seed`, mot de passe commun `demo1234`) :
 
-1. **Login employé** (`s.martin@lexora.fr`) → arrivée sur le **hub** : post-its, kanban Finance, calendrier. Montrer : créer un post-it et l'assigner à un collègue, déplacer une carte kanban (drag & drop → PATCH optimiste), créer un **événement personnel** rose « RDV dentiste » (case personnel cochée).
+1. **Login employé** (`s.martin@lexora.fr`) → arrivée sur le **hub** : post-its, kanban Finance, calendrier. Montrer : créer un post-it et l'assigner à un collègue, déplacer une carte kanban (drag & drop → PATCH optimiste), créer un **événement personnel** rose « RDV dentiste » (comportement par défaut : sans cocher « Événement d'équipe », l'événement ne cible que soi — côté API, un `employe_id` absent vaut soi-même, seul un `null` explicite publie à tous).
 2. **Login manager** (`m.dupont@lexora.fr`, même département) → sur SON dashboard : il voit le planning Finance mais **pas** le rappel dentiste de Sophie. Montrer : créer une tâche de département (« + Nouvelle tâche », réservé manager), poser un créneau **Planning (équipe)** vert sur Sophie depuis le calendrier.
 3. Toujours en manager → **Équipe** → « Voir le dashboard » de Sophie : bandeau lecture seule, ses post-its, le kanban, ET son rappel dentiste (visible ici, et seulement ici). Montrer qu'aucun bouton d'action n'existe — et rappeler que côté serveur, **aucune route d'écriture « pour le compte de » n'existe**.
 4. **Login admin** (`admin@lexora.fr`) → son calendrier est personnel (pas de fouillis de toute l'entreprise) ; page Équipe → répertoire (créer un employé) + tous les dashboards.
