@@ -594,8 +594,87 @@ tbody tr:last-child td {
   font-size: 0.83rem;
 }
 
+/* ── Web mobile (≤ 768 px) ─────────────────────────────────
+   La sidebar devient un menu coulissant ouvert par le bouton ☰,
+   le contenu prend toute la largeur et les formulaires passent
+   sur une colonne. Approche : desktop d'abord, une seule rupture
+   à 768 px (tablette portrait et téléphones). */
+.mobile-topbar,
+.sidebar-overlay { display: none; }
+
 @media (max-width: 768px) {
-  .sidebar { width: 200px; }
+  .app-layout { flex-direction: column; }
+
+  .mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 900;
+    height: 56px;
+    padding: 0 12px;
+    background: #1a1d2e;
+    color: #fff;
+  }
+  .mobile-menu-btn {
+    width: 44px;              /* zone tactile d'au moins 44 px */
+    height: 44px;
+    padding: 0;
+    font-size: 1.4rem;
+    background: transparent;
+    color: #fff;
+    box-shadow: none;
+  }
+  .mobile-menu-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .mobile-topbar-logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    color: #a99cff;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+    width: 260px;
+    height: 100vh;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    overflow-y: auto;
+  }
+  .sidebar.open { transform: translateX(0); box-shadow: 4px 0 24px rgba(0,0,0,0.35); }
+
+  .sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 950;
+    background: rgba(10, 12, 25, 0.5);
+  }
+
+  .content { padding: 20px 16px; overflow-x: hidden; }
+  h1 { font-size: 1.35rem; }
+
+  /* Formulaires : un champ par ligne, bouton pleine largeur */
+  form { flex-direction: column; align-items: stretch; padding: 16px; }
+  form > input, form > select, form > textarea, form > button { width: 100%; }
+
+  /* Listes : les boutons d'action passent sous le texte */
+  .client-item { flex-wrap: wrap; gap: 10px; padding: 12px 14px; }
+
+  /* Barres d'outils et tableaux */
+  .page-toolbar, .vault-toolbar { flex-wrap: wrap; gap: 10px; }
+  .search-input { width: 100%; }
+  table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar { transition: none; }
 }
 
 .recent-section {

@@ -230,6 +230,59 @@ function Employes() {
   );
 }
 
+// ── Sous-composant : journal d'activité (admin) ─────────────
+// Les entrées viennent de Redis via GET /api/activity (voir backend/services/activity.js).
+const ACTIONS_JOURNAL = [
+  { value: '',         label: 'Tout' },
+  { value: 'auth',     label: 'Connexions' },
+  { value: 'client',   label: 'Clients' },
+  { value: 'employe',  label: 'Comptes' },
+  { value: 'document', label: 'Documents' },
+  { value: 'task',     label: 'Tâches' },
+];
+
+function JournalActivite() {
+  const [entries, setEntries] = useState([]);
+  const [enabled, setEnabled] = useState(true);
+  const [filtre, setFiltre]   = useState('');
+  const { authHeaders } = useAuth();
+
+  useEffect(() => {
+    const query = filtre ? `?limit=30&action=${filtre}` : '?limit=30';
+    fetch(`/api/activity${query}`, { headers: authHeaders })
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(data => { setEnabled(data.enabled); setEntries(data.entries || []); })
+      .catch(() => setEnabled(false));
+  }, [filtre]);
+
+  const quand = iso => new Date(iso).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+
+  return (
+    <div className="client-list">
+      <div style={{ display: 'flex', gap: 8, padding: '12px 16px', flexWrap: 'wrap' }}>
+        <label htmlFor="journal-filtre" style={{ alignSelf: 'center', fontSize: '0.85rem' }}>Filtrer :</label>
+        <select id="journal-filtre" value={filtre} onChange={e => setFiltre(e.target.value)}>
+          {ACTIONS_JOURNAL.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+        </select>
+      </div>
+      {!enabled ? (
+        <div className="empty-state"><p>Journal indisponible : Redis n'est pas connecté.</p></div>
+      ) : entries.length === 0 ? (
+        <div className="empty-state"><p>Aucune activité enregistrée pour le moment.</p></div>
+      ) : (
+        entries.map((e, i) => (
+          <div key={`${e.at}-${i}`} className="client-item">
+            <div className="client-info">
+              <span className="client-name">{e.user || 'Visiteur'} {e.label}</span>
+              <span className="client-email">{quand(e.at)}{e.role && ` · ${e.role}`}</span>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 // ── Page principale exportée ───────────────────────────────
 export default function Equipe() {
   const { user } = useAuth();
@@ -271,6 +324,11 @@ export default function Equipe() {
             ◎ Répertoire des employés
           </h2>
           <Employes />
+
+          <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '1.75rem 0 0.75rem' }}>
+            ⏱ Journal d'activité
+          </h2>
+          <JournalActivite />
         </>
       )}
     </div>

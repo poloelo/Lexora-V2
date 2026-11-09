@@ -14,6 +14,7 @@
 import { Router } from 'express';
 import db from '../models/db.js';
 import { verifyJWT, loadUser, requireRole } from '../middleware/auth.js';
+import { logActivity } from '../services/activity.js';
 
 const router = Router();
 
@@ -121,6 +122,7 @@ router.post('/', requireRole('manager', 'admin'), (req, res) => {
       title.trim(), description || null, department_id, req.user.id,
       status || 'todo', priority || 'medium', due_date || null
     );
+    logActivity(req.user, 'task.create', `a créé la tâche « ${title.trim()} »`);
     res.status(201).json(getTask(result.lastInsertRowid));
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });
@@ -204,6 +206,7 @@ router.delete('/:id', requireRole('manager', 'admin'), (req, res) => {
     }
 
     db.prepare('DELETE FROM tasks WHERE id = ?').run(task.id);
+    logActivity(req.user, 'task.delete', `a supprimé la tâche « ${task.title} »`);
     res.json({ message: 'Tâche supprimée' });
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });

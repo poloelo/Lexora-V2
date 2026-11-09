@@ -19,6 +19,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import db from '../models/db.js';
 import { verifyJWT, loadUser } from '../middleware/auth.js';
+import { logActivity } from '../services/activity.js';
 
 const router = Router();
 
@@ -178,6 +179,7 @@ router.post('/upload', upload.single('file'), (req, res) => {
     );
 
     const created = db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid);
+    logActivity(req.user, 'document.upload', `a déposé le fichier ${created.nom}`);
     res.status(201).json(created);
   } catch (err) {
     res.status(500).json({ error: 'Erreur lors de l\'upload', detail: err.message });
@@ -195,6 +197,7 @@ router.delete('/:id', (req, res) => {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
     db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
+    logActivity(req.user, 'document.delete', `a supprimé le fichier ${doc.nom}`);
     res.json({ message: 'Document supprimé' });
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });

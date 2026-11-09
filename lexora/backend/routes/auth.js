@@ -2,6 +2,7 @@ import { Router } from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import db from '../models/db.js';
+import { logActivity } from '../services/activity.js';
 
 const router = Router();
 
@@ -15,11 +16,13 @@ router.post('/login', (req, res) => {
 
   const employe = db.prepare('SELECT * FROM employes WHERE email = ?').get(email);
   if (!employe || !employe.password_hash) {
+    logActivity(null, 'auth.failed', `échec de connexion pour ${email}`);
     return res.status(401).json({ error: 'Identifiants incorrects' });
   }
 
   const valid = bcrypt.compareSync(password, employe.password_hash);
   if (!valid) {
+    logActivity(null, 'auth.failed', `échec de connexion pour ${email}`);
     return res.status(401).json({ error: 'Identifiants incorrects' });
   }
 
@@ -37,6 +40,7 @@ router.post('/login', (req, res) => {
   };
 
   const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+  logActivity(employe, 'auth.login', 's\'est connecté');
   res.json({ token, user: payload });
 });
 

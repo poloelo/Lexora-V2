@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import db from '../models/db.js';
 import { verifyJWT, loadUser, requireRole } from '../middleware/auth.js';
+import { logActivity } from '../services/activity.js';
 
 const router = express.Router();
 
@@ -112,6 +113,7 @@ router.post('/', isAdmin, (req, res) => {
     `).run(nom, prenom, email, poste ?? null, departement_id ?? null, salaire ?? null, date_embauche ?? null, role || 'employe', password_hash);
 
     const employe = db.prepare(`${EMPLOYE_SELECT} WHERE e.id = ?`).get(result.lastInsertRowid);
+    logActivity(req.user, 'employe.create', `a créé le compte de ${[employe.prenom, employe.nom].filter(Boolean).join(' ')}`);
     res.status(201).json(employe);
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur', detail: err.message });
@@ -163,9 +165,10 @@ router.put('/:id/password', isAdmin, (req, res) => {
 // nominative (created_by → NULL). Voir les ON DELETE dans db.js.
 router.delete('/:id', isAdmin, (req, res) => {
   try {
-    const employe = db.prepare('SELECT id FROM employes WHERE id = ?').get(req.params.id);
+    const employe = db.prepare('SELECT id, nom, prenom FROM employes WHERE id = ?').get(req.params.id);
     if (!employe) return res.status(404).json({ error: 'Employé non trouvé' });
     db.prepare('DELETE FROM employes WHERE id = ?').run(req.params.id);
+    logActivity(req.user, 'employe.delete', `a supprimé le compte de ${[employe.prenom, employe.nom].filter(Boolean).join(' ')}`);
     res.json({ message: 'Employé supprimé' });
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });

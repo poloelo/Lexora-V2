@@ -31,6 +31,7 @@ import evenementsRouter  from './routes/evenements.js';
 import documentsRouter   from './routes/documents.js';
 import dashboardRouter   from './routes/dashboard.js';
 import authRouter        from './routes/auth.js';
+import activityRouter    from './routes/activity.js';
 
 const app  = express();
 
@@ -91,5 +92,6 @@ app.use('/api/employes',    employesRouter);
 app.use('/api/evenements',  evenementsRouter);
 app.use('/api/documents',   documentsRouter);
 app.use('/api/dashboard',   dashboardRouter);  // Consultation lecture seule (manager/admin)
+app.use('/api/activity',    activityRouter);   // Journal d'activité Redis (admin)
 
 export default app;

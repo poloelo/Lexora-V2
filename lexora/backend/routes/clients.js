@@ -17,6 +17,7 @@ import express from 'express';
 import db from '../models/db.js';
 import { verifyJWT, loadUser } from '../middleware/auth.js';
 import { supprimerDossierRecursif } from './documents.js';
+import { logActivity } from '../services/activity.js';
 
 const router = express.Router();
 
@@ -95,7 +96,9 @@ router.post('/', (req, res) => {
       return db.prepare('SELECT * FROM clients WHERE id = ?').get(client.id);
     });
 
-    res.status(201).json(creerClientEtDossier());
+    const created = creerClientEtDossier();
+    logActivity(req.user, 'client.create', `a créé le client ${nomAffichable(created)}`);
+    res.status(201).json(created);
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -153,6 +156,7 @@ router.delete('/:id', (req, res) => {
     }
 
     db.prepare('DELETE FROM clients WHERE id = ?').run(req.params.id);
+    logActivity(req.user, 'client.delete', `a supprimé le client ${nomAffichable(client)}${deleteDossier === 'true' ? ' et son dossier' : ''}`);
     res.json({ message: 'Client supprimé' });
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });

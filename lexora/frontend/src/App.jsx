@@ -1,4 +1,5 @@
-import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { ToastProvider } from './contexts/ToastContext.jsx';
 import { AuthProvider, useAuth } from './contexts/AuthContext.jsx';
 
@@ -37,7 +38,7 @@ const NAV_PRINCIPAL = [
 ];
 
 // ── Sidebar ───────────────────────────────────────────────
-function Sidebar() {
+function Sidebar({ open }) {
   const { isAuthenticated, user, logout } = useAuth();
   const navigate = useNavigate();
   const isAdmin   = user?.role === 'admin';
@@ -47,7 +48,7 @@ function Sidebar() {
   const handleLogout = () => { logout(); navigate('/login'); };
 
   return (
-    <nav className="sidebar">
+    <nav id="sidebar" className={`sidebar${open ? ' open' : ''}`} aria-label="Navigation principale">
       <div className="sidebar-logo">
         <span className="sidebar-logo-icon">L</span>
         Lexora
@@ -114,9 +115,39 @@ function Sidebar() {
 
 // ── Layout principal (avec sidebar) ──────────────────────
 function AppLayout() {
+  // Web mobile : sous 768 px, la sidebar devient un menu coulissant
+  // ouvert par le bouton ☰ de la barre du haut (voir index.css).
+  const [menuOpen, setMenuOpen] = useState(false);
+  const location = useLocation();
+
+  // Le menu se referme dès qu'on change de page…
+  useEffect(() => { setMenuOpen(false); }, [location.pathname]);
+
+  // …et avec la touche Échap (accessibilité clavier)
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = e => { if (e.key === 'Escape') setMenuOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
+
   return (
     <div className="app-layout">
-      <Sidebar />
+      <header className="mobile-topbar">
+        <button
+          type="button"
+          className="mobile-menu-btn"
+          aria-label={menuOpen ? 'Fermer le menu' : 'Ouvrir le menu'}
+          aria-expanded={menuOpen}
+          aria-controls="sidebar"
+          onClick={() => setMenuOpen(o => !o)}
+        >
+          {menuOpen ? '✕' : '☰'}
+        </button>
+        <span className="mobile-topbar-logo"><span className="sidebar-logo-icon">L</span>Lexora</span>
+      </header>
+      <Sidebar open={menuOpen} />
+      {menuOpen && <div className="sidebar-overlay" onClick={() => setMenuOpen(false)} aria-hidden="true" />}
       <main className="content">
         <Routes>
           <Route path="/"           element={<Dashboard />} />

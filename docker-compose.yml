@@ -11,6 +11,8 @@ services:
       - PORT=3000
       - DB_PATH=/app/data/lexora.db
       - OLLAMA_URL=http://host.docker.internal:11434
+      # Journal d'activité (NoSQL) : le backend joint Redis par le nom du service
+      - REDIS_URL=redis://redis:6379
       # Surchargez JWT_SECRET et OLLAMA_MODEL via un fichier .env ou une variable d'env
       # OLLAMA_MODEL=llama3.2
     volumes:
@@ -21,6 +23,19 @@ services:
       - uploads-data:/app/uploads
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Base NoSQL clé-valeur pour le journal d'activité (voir services/activity.js).
+  # --appendonly yes : Redis écrit chaque commande sur disque, le journal
+  # survit donc à un redémarrage du conteneur.
+  redis:
+    image: redis:7-alpine
+    container_name: lexora-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
     restart: unless-stopped
 
   frontend:
@@ -39,3 +54,5 @@ volumes:
   sqlite-data:
   # Persistance des fichiers uploadés dans le coffre-fort documentaire
   uploads-data:
+  # Persistance du journal d'activité Redis
+  redis-data:
